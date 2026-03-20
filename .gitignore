@@ -88,6 +88,8 @@ cython_debug/
 *.npz
 *.npy
 *.jar
+*.out
+output/
 runs/
 logs/
 checkpoints/
