@@ -1,0 +1,19 @@
+{
+    "environment": {
+        "base_pressure": null,
+        "base_temperature": null,
+        "date": null,
+        "elevation": 20,
+        "geodetic_method": "wgs84",
+        "latitude": 54.372158,
+        "longitude": 18.638306,
+        "wind_average": null,
+        "wind_turbulence":null 
+    },
+    "flight": {
+        "heading": 90.0,
+        "inclination": 90.0,
+        "rail_length": 1.0
+    }
+
+}

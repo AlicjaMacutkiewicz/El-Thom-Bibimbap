@@ -2,9 +2,10 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import json
+import string
+import tqdm
 from enum import IntEnum
-from rocketpy import Environment, SolidMotor, Rocket, Flight as rk
-from rocketpy.simulation import flight
+from rocketpy import Environment, SolidMotor, Rocket, Flight 
 
 
 
@@ -32,11 +33,11 @@ def print_warning(msg):
 # Initializes rocket with data found in give JSON file
 # @ARGUMENTS: 
 #     path_to_file -> STRING representing path to JSON file
+#     drag_curve_csv -> STRING representing path to CSV file
+#     thrust_source_csv -> STRING representing path to CSV file
 # @RETURN
 #     rocket -> Initialized rocketpy::Rocket class 
-
-
-def init_from_JSON(path_to_file):
+def init_rocket_from_JSON(path_to_file, drag_curve_csv, thrust_source_csv):
     with open(path_to_file, 'r', encoding='utf-8')as file:
         data= json.load(file)
     print_info(f"Reading from {path_to_file}")
@@ -49,7 +50,7 @@ def init_from_JSON(path_to_file):
      
     print_info("loading motor")
     motor = SolidMotor(
-        thrust_source=motor_data["thrust_source"],
+        thrust_source=thrust_source_csv,
         dry_mass=motor_data["dry_mass"],
         dry_inertia=motor_data["dry_inertia"],
         nozzle_radius=motor_data["nozzle_radius"],
@@ -72,8 +73,8 @@ def init_from_JSON(path_to_file):
         radius=rocket_data["radius"],
         mass=rocket_data["mass"],
         inertia=tuple(rocket_data["inertia"]),
-        power_off_drag=rocket_data["drag_curve"],
-        power_on_drag=["drag_curve"],
+        power_off_drag=drag_curve_csv,
+        power_on_drag=drag_curve_csv,
         center_of_mass_without_motor=rocket_data["center_of_mass_without_propellant"],
         coordinate_system_orientation=rocket_data["coordinate_system_orientation"]
                 )
@@ -81,7 +82,7 @@ def init_from_JSON(path_to_file):
     print_info("loading nose")
     nose_data = data["nosecones"]
     rocket.add_nose(
-            length=nose_data["lenght"],
+            length=nose_data["length"],
             kind=nose_data["kind"],
             position=nose_data["position"]
             )
@@ -105,3 +106,51 @@ def init_from_JSON(path_to_file):
             )
     return rocket
 
+
+def init_environment_from_JSON(path_to_file):
+    with open(path_to_file, 'r', encoding='utf-8')as file:
+        data= json.load(file)
+    print_info(f"Reading from {path_to_file}")
+    env_data = data["environment"]
+    env = Environment(
+                latitude=env_data["latitude"], 
+                longitude=env_data["longitude"],
+                date=env_data["date"],
+                elevation=env_data["elevation"]
+            )
+    return env
+def init_flight_from_JSON(path_to_file, rocket, environment):
+    with open(path_to_file, 'r', encoding='utf-8')as file:
+        data= json.load(file)
+    print_info(f"Reading from {path_to_file}")
+    flight_data = data["flight"]
+    temp  = Flight(
+               heading=flight_data["heading"],
+               environment= environment,
+               rocket=rocket,
+               rail_length=flight_data["rail_length"]
+            )
+    return temp
+
+
+def generator(N, flight):
+    # for _ in tqdm.tqdm(range(generations), "Evolving"):
+    for i in tqdm.tqdm(range(N), "Siupi duping grzesia"):
+        start_flight = flight
+        file_name = f"output/flight_{i}.out"
+        with open(file_name, 'w+') as file:
+            for sample in start_flight.solution:
+                file.write(  str(sample) + "\n")
+
+
+def main():
+    json_path = "../../source_model/APEX_OUTPUT/parameters.json"
+    drag_path= "../../source_model/APEX_OUTPUT/drag_curve.csv"
+    thrust_path= "../../source_model/APEX_OUTPUT/thrust_source.csv"
+    rocket = init_rocket_from_JSON(json_path, drag_path , thrust_path)
+    environment = init_environment_from_JSON("config.json")
+    flight = init_flight_from_JSON("config.json", rocket, environment) 
+    generator(67,flight)
+
+if __name__=="__main__":
+    main()
