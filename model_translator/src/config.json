@@ -14,6 +14,43 @@
         "heading": 90.0,
         "inclination": 90.0,
         "rail_length": 1.0
+    },
+  "barometer": {
+        "sampling_rate": 50.0,
+        "measurement_range": 100000.0,
+        "resolution": 0.16,
+        "noise_density": 19.0,
+        "noise_variance": 19.0,
+        "random_walk_density": 0.01,
+        "random_walk_variance": 1.0,
+        "constant_bias": 1.0,
+        "operating_temperature": 298.15,
+        "temperature_bias": 0.02
+    },
+    "accelerometer": {
+        "sampling_rate": 200.0,
+        "orientation": [0, 0, 0],
+        "measurement_range": [-156.96, 156.96],
+        "resolution": 0.01,
+        "noise_density": 0.05,
+        "noise_variance": 0.25,
+        "random_walk_density": 0.02,
+        "random_walk_variance": 0.0025,
+        "constant_bias": -0.2,
+        "operating_temperature": 298.15,
+        "temperature_bias": 0.0
+    },
+    "gyroscope": {
+        "sampling_rate": 200.0,
+        "orientation": [0, 0, 0],
+        "measurement_range": [-2000.0, 2000.0],
+        "resolution": 0.05,
+        "noise_density": 0.02,
+        "noise_variance": 0.04,
+        "random_walk_density": 0.01,
+        "random_walk_variance": 0.0001,
+        "constant_bias": 0.1,
+        "operating_temperature": 298.15,
+        "temperature_bias": 0.0
     }
-
 }
