@@ -1,5 +1,5 @@
-[
-  {
+{
+  "LSM9DS1_acc_2g": {
     "name": "LSM9DS1_acc_2g",
     "sampling_rate": 952.0,
     "measurement_range": 19.613,
@@ -16,7 +16,7 @@
     "consider_gravity": true,
     "orientation": [0.0, 0.0, 0.0]
   },
-  {
+  "LSM9DS1_acc_4g": {
     "name": "LSM9DS1_acc_4g",
     "sampling_rate": 952.0,
     "measurement_range": 39.227,
@@ -33,7 +33,7 @@
     "consider_gravity": true,
     "orientation": [0.0, 0.0, 0.0]
   },
-  {
+  "LSM9DS1_acc_8g" :{
     "name": "LSM9DS1_acc_8g",
     "sampling_rate": 952.0,
     "measurement_range": 78.453,
@@ -50,7 +50,7 @@
     "consider_gravity": true,
     "orientation": [0.0, 0.0, 0.0]
   },
-  {
+  "LSM9DS1_acc_16g" :{
     "name": "LSM9DS1_acc_16g",
     "sampling_rate": 952.0,
     "measurement_range": 156.906,
@@ -67,4 +67,4 @@
     "consider_gravity": true,
     "orientation": [0.0, 0.0, 0.0]
   }
-]
+}
