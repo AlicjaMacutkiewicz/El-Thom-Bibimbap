@@ -208,7 +208,9 @@ def main():
     acc_list.append(init_accelerometer_from_JSON("../sensors/accelerometer.json","LSM9DS1_acc_4g"))
     acc_list.append(init_accelerometer_from_JSON("../sensors/accelerometer.json","LSM9DS1_acc_8g"))
     acc_list.append(init_accelerometer_from_JSON("../sensors/accelerometer.json","LSM9DS1_acc_16g"))
-    
+    acc_list.append(init_gyroscope_from_JSON("../sensors/gyroscope.json","LSM9DS1_gyro_245dps"))
+    acc_list.append(init_gyroscope_from_JSON("../sensors/gyroscope.json","LSM9DS1_gyro_500dps"))
+    acc_list.append(init_gyroscope_from_JSON("../sensors/gyroscope.json","LSM9DS1_gyro_2000dps"))
     flight = init_flight_from_JSON("config.json",rocket,environment)
     add_acc_to_rocket(rocket , acc_list)
     parallel_generator(3,rocket , environment , flight)
