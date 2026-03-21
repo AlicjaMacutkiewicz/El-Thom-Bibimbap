@@ -14,6 +14,7 @@ input:
 
 
 output:
+
 - angular velocity: 
     (based on 3 sigma criterium, scaled down for lower measurement ranges)
     ~ (  0 ,  245) [dps] -> U(-0.004375, 0.004375) + N(0,   1.49) [dps]
@@ -37,5 +38,13 @@ output:
     ~ (0, 500) [m/s] -> 0.05 m/s
 
 - heading:
+    (changed to radians)
     ~ 0.005236 [rad] (full range)
 
+- temperature:
+    (changed to Kelvins)
+    ~ (233.15, 358.15) [K] 0.01 + 0.5
+
+- pressure:
+    (changed to Pascals)
+    ~ (30000.0, 110000.0) [Pa] 0.18 + 100 + 1.5
