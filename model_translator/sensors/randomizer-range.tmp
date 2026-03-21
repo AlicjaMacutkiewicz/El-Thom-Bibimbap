@@ -6,6 +6,8 @@ dictionary:
     LSB - Least Significant Bit
     U - Continuous Uniform Distribution (Constant)
     N - Continuous Normal Distribution (Gauss)
+    g - gravitational constant 
+    g - mili (tousandth of) gravitational constant 
 
 
 input:
@@ -19,4 +21,8 @@ output:
     ~ (500 , 2000) [dps] -> U(-0.035000, 0.035000) + N(0, 100.00) [dps]
 
 - linear acceleration sensivity:
-    
+    (based on 3 sigma criterium, scaled down for lower measurement ranges)
+    ~ (0 ,  2) [g] -> U(-0.0305, 0.0305) + N(0,   56.25) [mg]
+    ~ (2 ,  4) [g] -> U(-0.0610, 0.0610) + N(0,  225.00) [mg]
+    ~ (4 ,  8) [g] -> U(-0.1220, 0.1220) + N(0,  900.00) [mg]
+    ~ (8 , 16) [g] -> U(-0.2440, 0.2440) + N(0, 3600.00) [mg]
