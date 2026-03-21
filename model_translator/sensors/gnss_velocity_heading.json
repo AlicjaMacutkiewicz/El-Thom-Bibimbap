@@ -3,6 +3,8 @@
     "name": "u-blox_MAX-M10S",
     "sampling_rate": 10.0,
     "position_accuracy": 1.274,
-    "altitude_accuracy": 1.911
+    "altitude_accuracy": 1.911,
+    "velocity_accuracy": 0.05,
+    "heading_accuracy": 0.005236
   }
 }

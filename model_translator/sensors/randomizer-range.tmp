@@ -27,10 +27,15 @@ output:
     ~ (4 ,  8) [g] -> U(-0.1220, 0.1220) + N(0,  900.00) [mg]
     ~ (8 , 16) [g] -> U(-0.2440, 0.2440) + N(0, 3600.00) [mg]
 
-- longitude and Latitude:
+- longitude and Latitude + altitude:
     (based on rayleighs distribution and altitude precision (2d->1d) measurement differences)
     > sampling rate GAL + GPS: 10Hz
     > position accuracy : 1.274m (full range)
     > altitude accuracy : 1.911m (full range)
-- altitude:
+
+- velocity:
+    ~ (0, 500) [m/s] -> 0.05 m/s
+
+- heading:
+    ~ 0.005236 [rad] (full range)
 
