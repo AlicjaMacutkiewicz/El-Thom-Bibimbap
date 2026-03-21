@@ -143,7 +143,6 @@ def init_flight_from_JSON(path_to_file, rocket, environment):
 
 
 def generator(N, flight):
-    # for _ in tqdm.tqdm(range(generations), "Evolving"):
     for i in tqdm.tqdm(range(N), "Siupi duping grzesia"):
         start_flight = flight
         file_name = f"output/flight_{i}.out"

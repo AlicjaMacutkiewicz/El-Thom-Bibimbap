@@ -1,0 +1,22 @@
+Randomized parameters: 
+
+dictionary: 
+    dps - degrees per second
+    mdps -  milidegrees per second
+    LSB - Least Significant Bit
+    U - Continuous Uniform Distribution (Constant)
+    N - Continuous Normal Distribution (Gauss)
+
+
+input:
+
+
+output:
+- angular velocity: 
+    (based on 3 sigma criterium, scaled down for lower measurement ranges)
+    ~ (  0 ,  245) [dps] -> U(-0.004375, 0.004375) + N(0,   1.49) [dps]
+    ~ (245 ,  500) [dps] -> U(-0.008750, 0.008750) + N(0,   6.25) [dps]
+    ~ (500 , 2000) [dps] -> U(-0.035000, 0.035000) + N(0, 100.00) [dps]
+
+- linear acceleration sensivity:
+    
