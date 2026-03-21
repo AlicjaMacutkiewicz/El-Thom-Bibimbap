@@ -189,7 +189,11 @@ def init_sensors_from_JSON(path_to_file) :
     )
     return (barometer,accelerometer,gyroscope) 
 
+<<<<<<< HEAD
 def generator(N, rocket, environment, flight):
+=======
+def generator(N, flight):
+>>>>>>> origin/sensor-parameters
     for i in tqdm.tqdm(range(N), "Siupi duping grzesia"):
         current_flight =flight
         file_name = f"output/flighjt_{i}.out"

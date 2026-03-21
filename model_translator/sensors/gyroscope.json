@@ -1,0 +1,53 @@
+[
+  {
+    "name": "LSM9DS1_gyro_245dps",
+    "sampling_rate": 952.0,
+    "measurement_range": 4.276,
+    "resolution": 0.000153,
+    "noise_density": 0.0005,
+    "noise_variance": 0.000457,
+    "random_walk_density": 0.0,
+    "random_walk_variance": 0.0,
+    "constant_bias": 0.021,
+    "operating_temperature": 298.15,
+    "temperature_bias": 0.0,
+    "temperature_scale_factor": 0.0,
+    "acceleration_sensitivity": 0.0,
+    "cross_axis_sensitivity": 0.0,
+    "orientation": [0.0, 0.0, 0.0]
+  },
+  {
+    "name": "LSM9DS1_gyro_500dps",
+    "sampling_rate": 952.0,
+    "measurement_range": 8.726,
+    "resolution": 0.000305,
+    "noise_density": 0.0005,
+    "noise_variance": 0.001903,
+    "random_walk_density": 0.0,
+    "random_walk_variance": 0.0,
+    "constant_bias": 0.044,
+    "operating_temperature": 298.15,
+    "temperature_bias": 0.0,
+    "temperature_scale_factor": 0.0,
+    "acceleration_sensitivity": 0.0,
+    "cross_axis_sensitivity": 0.0,
+    "orientation": [0.0, 0.0, 0.0]
+  },
+  {
+    "name": "LSM9DS1_gyro_2000dps",
+    "sampling_rate": 952.0, 
+    "measurement_range": 34.906,
+    "resolution": 0.001222,
+    "noise_density": 0.0005,
+    "noise_variance": 0.03046,
+    "random_walk_density": 0.0,
+    "random_walk_variance": 0.0,
+    "constant_bias": 0.175,
+    "operating_temperature": 298.15,
+    "temperature_bias": 0.0,
+    "temperature_scale_factor": 0.0,
+    "acceleration_sensitivity": 0.0,
+    "cross_axis_sensitivity": 0.0,
+    "orientation": [0.0, 0.0, 0.0]
+  }
+]
