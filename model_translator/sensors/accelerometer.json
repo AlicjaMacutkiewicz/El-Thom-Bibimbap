@@ -1,6 +1,6 @@
 [
   {
-    "name": "LSM9DS1_Acc_2g",
+    "name": "LSM9DS1_acc_2g",
     "sampling_rate": 952.0,
     "measurement_range": 19.613,
     "resolution": 0.000598,
@@ -17,7 +17,7 @@
     "orientation": [0.0, 0.0, 0.0]
   },
   {
-    "name": "LSM9DS1_Acc_4g",
+    "name": "LSM9DS1_acc_4g",
     "sampling_rate": 952.0,
     "measurement_range": 39.227,
     "resolution": 0.001196,
@@ -34,7 +34,7 @@
     "orientation": [0.0, 0.0, 0.0]
   },
   {
-    "name": "LSM9DS1_Acc_8g",
+    "name": "LSM9DS1_acc_8g",
     "sampling_rate": 952.0,
     "measurement_range": 78.453,
     "resolution": 0.002393,
@@ -51,7 +51,7 @@
     "orientation": [0.0, 0.0, 0.0]
   },
   {
-    "name": "LSM9DS1_Acc_16g",
+    "name": "LSM9DS1_acc_16g",
     "sampling_rate": 952.0,
     "measurement_range": 156.906,
     "resolution": 0.007178,
