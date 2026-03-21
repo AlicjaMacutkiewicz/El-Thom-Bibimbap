@@ -8,10 +8,6 @@ from enum import IntEnum
 from rocketpy import Environment, SolidMotor, Rocket, Flight 
 
 
-
-
-
-
 class LogLevel(IntEnum):
     INFO = 1
     WARNING = 2
@@ -28,6 +24,19 @@ def print_warning(msg):
     if C_CURRENT_LOG_LEVEL>= LogLevel.WARNING:
         print("WARNING: " + msg + '\n')
 
+
+# @BRIEF
+# cretes string based on rp.solution_array, without np.float type signature
+# @ARGUMENTS: 
+#       data -> rp.solution_array instance
+# @RETURN
+#       msg -> string representation of given array
+def rp_solution_arr_str(data):
+    msg = '['
+    for itr in data:
+        msg += f"{str(itr)},"
+    msg += ']'
+    return msg
 
 # @BRIEF
 # Initializes rocket with data found in give JSON file
@@ -140,8 +149,7 @@ def generator(N, flight):
         file_name = f"output/flight_{i}.out"
         with open(file_name, 'w+') as file:
             for sample in start_flight.solution:
-                file.write(  str(sample) + "\n")
-
+                file.write(rp_solution_arr_str(sample)+'\n')
 
 def main():
     json_path = "../../source_model/APEX_OUTPUT/parameters.json"
