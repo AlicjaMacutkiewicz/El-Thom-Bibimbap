@@ -5,7 +5,8 @@ import json
 import string
 import tqdm
 from enum import IntEnum
-from rocketpy import Environment, SolidMotor, Rocket, Flight 
+import pandas as pd
+from rocketpy import Environment, SolidMotor, Rocket, Flight , Barometer , Accelerometer, Gyroscope
 
 
 class LogLevel(IntEnum):
@@ -141,15 +142,81 @@ def init_flight_from_JSON(path_to_file, rocket, environment):
             )
     return temp
 
+def init_sensors_from_JSON(path_to_file) :
+    with open(path_to_file, 'r', encoding='utf-8')as file:
+        data= json.load(file)
+    barometer_data = data["barometer"] 
+    barometer = Barometer(
+        sampling_rate=barometer_data["sampling_rate"],
+        measurement_range=barometer_data["measurement_range"],
+        resolution=barometer_data["resolution"],
+        noise_density=barometer_data["noise_density"],
+        noise_variance=barometer_data["noise_variance"],
+        random_walk_density=barometer_data["random_walk_density"],
+        random_walk_variance=barometer_data["random_walk_variance"],
+        constant_bias=barometer_data["constant_bias"],
+        operating_temperature=barometer_data["operating_temperature"],
+        temperature_bias=barometer_data["temperature_bias"]
+    )
+    
+    accel_data = data["accelerometer"]
+    accelerometer = Accelerometer(
+        sampling_rate=accel_data["sampling_rate"],
+        measurement_range=accel_data["measurement_range"],
+        resolution=accel_data["resolution"],
+        noise_density=accel_data["noise_density"],
+        noise_variance=accel_data["noise_variance"],
+        random_walk_density=accel_data["random_walk_density"],
+        random_walk_variance=accel_data["random_walk_variance"],
+        constant_bias=accel_data["constant_bias"],
+        operating_temperature=accel_data["operating_temperature"],
+        temperature_bias=accel_data["temperature_bias"],
+        orientation=accel_data["orientation"]
+    )
+    gyro_data = data["gyroscope"]
+    gyroscope = Gyroscope(
+        sampling_rate=gyro_data["sampling_rate"],
+        measurement_range=gyro_data["measurement_range"],
+        resolution=gyro_data["resolution"],
+        noise_density=gyro_data["noise_density"],
+        noise_variance=gyro_data["noise_variance"],
+        random_walk_density=gyro_data["random_walk_density"],
+        random_walk_variance=gyro_data["random_walk_variance"],
+        constant_bias=gyro_data["constant_bias"],
+        operating_temperature=gyro_data["operating_temperature"],
+        temperature_bias=gyro_data["temperature_bias"],
+        orientation=gyro_data["orientation"]
+    )
+    return (barometer,accelerometer,gyroscope) 
 
-def generator(N, flight):
-    # for _ in tqdm.tqdm(range(generations), "Evolving"):
+def generator(N, rocket, environment, flight):
     for i in tqdm.tqdm(range(N), "Siupi duping grzesia"):
-        start_flight = flight
-        file_name = f"output/flight_{i}.out"
+        current_flight =flight
+        file_name = f"output/flighjt_{i}.out"
         with open(file_name, 'w+') as file:
-            for sample in start_flight.solution:
-                file.write(rp_solution_arr_str(sample)+'\n')
+            for sample in current_flight.solution:
+                file.write(rp_solution_arr_str(sample) + '\n')
+        sensor_dfs = []
+        for sensor_tuple in rocket.sensors:
+            sensor = sensor_tuple.component 
+            name = sensor.__class__.__name__
+            if name == "Barometer":
+                cols = ["Time", "Baro_Pressure"] 
+            elif name == "Accelerometer":
+                cols = ["Time", "Acc_X", "Acc_Y", "Acc_Z"]
+            elif name == "Gyroscope":
+                cols = ["Time", "Gyro_X", "Gyro_Y", "Gyro_Z"]
+            else:
+                num_measurements = len(sensor.measured_data[0]) - 1
+                cols = ["Time"] + [f"{name}_{j}" for j in range(num_measurements)]
+            df = pd.DataFrame(sensor.measured_data, columns=cols)
+            df.set_index("Time", inplace=True)
+            sensor_dfs.append(df)
+        if sensor_dfs:
+            final_telemetry_df = pd.concat(sensor_dfs, axis=1)
+            final_telemetry_df.sort_index(inplace=True)
+            file_name_csv = f"output/flight_{i}_sensors.out"
+            final_telemetry_df.to_csv(file_name_csv, index_label="Time")
 
 def main():
     json_path = "../../source_model/APEX_OUTPUT/parameters.json"
@@ -157,8 +224,12 @@ def main():
     thrust_path= "../../source_model/APEX_OUTPUT/thrust_source.csv"
     rocket = init_rocket_from_JSON(json_path, drag_path , thrust_path)
     environment = init_environment_from_JSON("config.json")
-    flight = init_flight_from_JSON("config.json", rocket, environment) 
-    generator(67,flight)
+    (barometer,accelerometer,gyroscope)  = init_sensors_from_JSON("config.json")
+    rocket.add_sensor(gyroscope , 1)
+    rocket.add_sensor(accelerometer, 1)
+    rocket.add_sensor(barometer, 1)
+    flight = init_flight_from_JSON("config.json",rocket,environment)
+    generator(10,rocket , environment , flight)
 
 if __name__=="__main__":
     main()
