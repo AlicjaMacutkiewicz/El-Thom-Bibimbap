@@ -11,7 +11,8 @@ dictionary:
 
 
 input:
-
+    - adding quasi random changes
+    - adding quasi random holes in signal (deletion of points in some ranges)
 
 output:
 

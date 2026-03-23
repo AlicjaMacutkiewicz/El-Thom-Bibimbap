@@ -1,0 +1,15 @@
+(# - zrobione)
+
+Do zrobienia:
+    1. Dodać czujniki z JSON'ów
+        - thermometer.JSON (temperatura)
+        - gnss_velocity.JSON (GNSS, prędkość)
+        - barometer.JSON (ciśnienie)
+    2. Dodać model atmosfery (zmienne warunki dla każdego z lotów)
+    3. Zmieniać parametry pracy silnika (zakłócenia, wady fabryczne - ok. 15% odchyłu brzmi sensownie)
+    4. Sprawdzić możliwości zmiany pozostałych warunków w trakcie lotów (i je zaimplementować)
+    5. Dodać funkcję odrzutu (usunięcia) losowo punktów na wyjściu
+    6. Nadanie losowych błędów czujników (znaczące wyjścia z zakresów, skoki itp)
+    7. Usprawnienie operacji odczytu/zapisu 
+    8. Optymalizacja kodu, dodać zrównoleglenie tam gdzie jest możliwe
+    9. Poprawa raportowania stanu przetwarzania (jakiś output ile już mamy przemielone a ile jeszcze nie)
