@@ -1,14 +1,10 @@
 {
     "environment": {
-        "base_pressure": null,
-        "base_temperature": null,
-        "date": null,
-        "elevation": 20,
-        "geodetic_method": "wgs84",
         "latitude": 54.372158,
         "longitude": 18.638306,
-        "wind_average": null,
-        "wind_turbulence":null 
+        "path": "data_stream-oper_stepType-instant.nc",
+        "date": "19.03.2026",
+        "elevation": 10
     },
     "flight": {
         "heading": 90.0,
