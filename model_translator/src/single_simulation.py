@@ -147,17 +147,14 @@ def apply_sensor_dropout(current_flight, frame):
 
         wind_speed = np.sqrt(wind_u**2 + wind_v**2)
 
-        drop_rates = np.clip(0.001 + 0.001*wind_speed + (g_force-4)*0.01, 0, 1)
-        if in_dropout:
-            frame.iloc[i] = np.nan
-            dropout_remaining -= 1
-            if dropout_remaining <= 0:
-                in_dropout = False
-        else:
-            if np.random.rand() < drop_rates[i]:
-                in_dropout = True
-                dropout_remaining = np.random.randint(10, 50)
-                frame.iloc[i] = np.nan
+        drop_rate = np.clip(0.001 + 0.001*wind_speed + (g_force-4)*0.01, 0, 1)
+        
+        if np.random.rand() < drop_rate:
+            dropout_interval = np.random.randint(10, 100)
+            for j in range(i, i+dropout_interval):
+                #frame.drop(i)
+                frame.iloc[i] = np.nan;
+        #frame.replace(to_replace = np.nan, value =-696969.696969)
     return frame
 
 def run_single_simulation(i, rocket, environment_data, heading , rail_length):
@@ -184,7 +181,7 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
             frame = pd.DataFrame(sensor.measured_data , columns=cols)
             frame.set_index("Time", inplace=True)
             
-            #apply_sensor_dropout(current_flight, frame)
+            apply_sensor_dropout(current_flight, frame)
 
             accel_data.append({
                     "df": frame,
@@ -192,7 +189,8 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
                     "name": sensor.name
                 })
     if accel_data:
-        all_accels_df = pd.concat([item["df"] for item in accel_data], axis=1)
+        accel_data_no_nans = accel_data[~np.isnan(a).any(axis=1), :]
+        all_accels_df = pd.concat([item["df"] for item in accel_data_no_nans], axis=1)
         times_array = all_accels_df.index.values
         
         real_acc_x = np.array([current_flight.ax(t) for t in times_array])
