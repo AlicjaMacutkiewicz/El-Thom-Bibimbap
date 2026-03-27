@@ -1,4 +1,5 @@
 import matplotlib.pyplot as plt
+import numpy as np
 import json
 import datetime
 import pandas as pd
@@ -199,12 +200,14 @@ def add_acc_to_rocket(rocket , acc_list):
     acc_list.sort(key= lambda x: x.measurement_range)
     for a in acc_list:
         #TODO: replace 1 
+        a.sampling_rate /= 10
         rocket.add_sensor(a , 1)
     return rocket
 
 def parallel_generator(N, rocket, environment, heading , rail_length):
     indices = range(N) 
     def worker(i):
+        np.random.seed(i)
         return run_single_simulation(i, rocket, environment, heading , rail_length)
 
     with ProcessPool() as pool:
