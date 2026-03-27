@@ -114,18 +114,14 @@ def init_environment_from_JSON(path_to_file):
             )
     return env
 
-def init_flight_from_JSON(path_to_file, rocket, environment):
+def init_flight_config_from_JSON(path_to_file, rocket, environment):
     with open(path_to_file, 'r', encoding='utf-8')as file:
         data= json.load(file)
     print_info(f"Reading from {path_to_file}")
     flight_data = data["flight"]
-    temp  = Flight(
-               heading=flight_data["heading"],
-               environment= environment,
-               rocket=rocket,
-               rail_length=flight_data["rail_length"]
-            )
-    return temp
+    heading=flight_data["heading"]
+    rail_length=flight_data["rail_length"]
+    return (heading ,  rail_length)
 
 def init_accelerometer_from_JSON(path_to_file, name):
     with open(path_to_file, 'r', encoding='utf-8')as file:
@@ -193,10 +189,10 @@ def add_acc_to_rocket(rocket , acc_list):
         rocket.add_sensor(a , 1)
     return rocket
 
-def parallel_generator(N, rocket, environment, flight):
+def parallel_generator(N, rocket, environment, heading , rail_length):
     indices = range(N) 
     def worker(i):
-        return run_single_simulation(i, rocket, environment, flight)
+        return run_single_simulation(i, rocket, environment, heading , rail_length)
 
     with ProcessPool() as pool:
         results = list(tqdm.tqdm(pool.imap(worker, indices), total=N, desc="Siupi dupi Grzesiu dawaj"))
@@ -224,9 +220,11 @@ def main():
     acc_list.append(init_gyroscope_from_JSON("../sensors/gyroscope.json","LSM9DS1_gyro_500dps"))
     acc_list.append(init_gyroscope_from_JSON("../sensors/gyroscope.json","LSM9DS1_gyro_2000dps"))
     acc_list.append(init_gnss_from_JSON("../sensors/gnss_velocity_heading.json","u-blox_MAX-M10S"))
-    flight = init_flight_from_JSON("config.json",rocket,environment)
+
+    (heading ,  rail_length) = init_flight_config_from_JSON("config.json",rocket,environment)
     add_acc_to_rocket(rocket , acc_list)
-    parallel_generator(3,rocket , environment , flight)
+
+    parallel_generator(3,rocket , environment , heading , rail_length)
     
 if __name__=="__main__":
     main()

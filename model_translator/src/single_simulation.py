@@ -110,12 +110,12 @@ def create_new_environment(environment_data):
 
     return env
 
-def run_single_simulation(i, rocket, environment_data, flight):
+def run_single_simulation(i, rocket, environment_data, heading , rail_length):
     current_flight = Flight(
-            heading=flight.heading,
+            heading=heading,
             environment=create_new_environment(environment_data),
             rocket=rocket,
-            rail_length=flight.rail_length
+            rail_length=rail_length
             )
     #for parquet data saving and packing (comment out lines below)
     # |
