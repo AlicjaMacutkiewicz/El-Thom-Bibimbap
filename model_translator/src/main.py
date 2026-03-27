@@ -229,15 +229,24 @@ def add_acc_to_rocket(rocket , acc_list):
         rocket.add_sensor(a , 1)
     return rocket
 
-def parallel_generator(N, json_path, drag_path,stochastic_motor, environment, heading , rail_length,acc_list):
+def test_stochastic_motor(stochastic_motor):
+        sampled_motor = stochastic_motor.create_object()
+        print("grain_density =", sampled_motor.grain_density)
+    
+def parallel_generator(N, json_path, drag_path, environment, heading , rail_length,acc_list,thrust_path):
     indices = range(N) 
     def worker(i):
         np.random.seed(i)
-
+        base_motor = init_base_motor_from_JSON(json_path, thrust_path)
+        stochastic_motor = init_stochastic_motor(base_motor)
         sampled_motor = stochastic_motor.create_object()
+        stochastic_motor._set_stochastic(seed=i)
+
         rocket = init_rocket_from_JSON(json_path,drag_path,sampled_motor)
         rocket = add_acc_to_rocket(rocket, acc_list)
+        test_stochastic_motor(stochastic_motor)
         return run_single_simulation(i, rocket, environment, heading, rail_length)
+    
 
     with ProcessPool() as pool:
         results = list(tqdm.tqdm(pool.imap(worker, indices), total=N, desc="Siupi dupi Grzesiu dawaj"))
@@ -249,26 +258,12 @@ def parallel_generator(N, json_path, drag_path,stochastic_motor, environment, he
     # master_df.reset_index(inplace=True)
     # master_df.to_parquet("dataset_packed.parquet", index=True)
     # |
-def test_stochastic_motor(stochastic_motor, n=5):
-    print("\n=== TEST STOCHASTIC MOTOR ===")
-    for i in range(n):
-        sampled_motor = stochastic_motor.create_object()
-
-        print(f"\nPróbka {i+1}:")
-        print("grain_density =", sampled_motor.grain_density)
-        print("grain_outer_radius =", sampled_motor.grain_outer_radius)
-        print("grain_initial_inner_radius =", sampled_motor.grain_initial_inner_radius)
-        print("grain_initial_height =", sampled_motor.grain_initial_height)
-        print("nozzle_radius =", sampled_motor.nozzle_radius)
-        print("throat_radius =", sampled_motor.throat_radius)
-        print("total_impulse =", sampled_motor.total_impulse)
+  
 def main():
     json_path = "../../source_model/APEX_OUTPUT/parameters.json"
     drag_path= "../../source_model/APEX_OUTPUT/drag_curve.csv"
     thrust_path= "../../source_model/APEX_OUTPUT/thrust_source.csv"
     
-    base_motor = init_base_motor_from_JSON(json_path, thrust_path)
-    stochastic_motor = init_stochastic_motor(base_motor)
 
     environment = get_environment_data_from_JSON("config.json")
     acc_list = [] 
@@ -284,8 +279,7 @@ def main():
     (heading ,  rail_length) = init_flight_config_from_JSON("config.json")
     
 
-    parallel_generator(3,json_path,drag_path,stochastic_motor,environment,heading,rail_length,acc_list)
-    test_stochastic_motor(stochastic_motor, 5)
+    parallel_generator(3,json_path,drag_path,environment,heading,rail_length,acc_list,thrust_path)
     
 if __name__=="__main__":
     main()
