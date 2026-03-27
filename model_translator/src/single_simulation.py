@@ -129,11 +129,7 @@ def apply_sensor_faults(sensor_data):
 
 def apply_sensor_dropout(current_flight, frame):
     times = frame.index.values
-
-    in_dropout = False
-    dropout_remaining = 0
-
-    for _ in range(1000):
+    for _ in range(4000):
         i = np.random.randint(0, len(times))
         ax = current_flight.ax(times[i])
         ay = current_flight.ay(times[i])
@@ -147,12 +143,12 @@ def apply_sensor_dropout(current_flight, frame):
 
         wind_speed = np.sqrt(wind_u**2 + wind_v**2)
 
-        drop_rate = np.clip(0.001 + 0.001*wind_speed + (g_force-4)*0.01, 0, 1)
+        drop_rate = np.clip(0.001 + 0.002*wind_speed + (g_force-4)*0.01, 0, 1)
         
         if np.random.rand() < drop_rate:
-            dropout_interval = np.random.randint(10, 100)
+            dropout_interval = np.random.randint(1000, 10000)
             for j in range(i, i+dropout_interval):
-                frame.iloc[i] = np.nan;
+                frame.iloc[j] = np.nan
     return frame
 
 def run_single_simulation(i, rocket, environment_data, heading , rail_length):
