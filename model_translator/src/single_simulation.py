@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from rocketpy import Flight , Accelerometer, Gyroscope, GnssReceiver
+from rocketpy import Flight , Accelerometer, Gyroscope, Environment
+import os
+import xarray as xr
+from scipy.interpolate import interp1d
 
 # @BRIEF
 # cretes string based on rp.solution_array, without np.float type signature
@@ -29,20 +32,95 @@ def get_best_angular_velocity(real_vals, suffix, all_accels_df, thresholds):
     choices = [all_accels_df[f"LSM9DS1_gyro_{dps}dps_{suffix}"] for dps in [245, 500]]
     return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_gyro_2000dps_{suffix}"])
 
-def get_gnss_value(all_data_df, coordinate, suffix=""):
-    column_name = f"GNSS_{coordinate}_{suffix}" if suffix else f"GNSS_{coordinate}"
-    return all_data_df[column_name]
+def create_new_environment(environment_data):
+    '''
+    Potrzebujemy 2 datasety
+    1. ERA5 hourly data on single levels from 1940 to present
+    https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview
+     a) reanalysis
+     b) 2m temperature
+     c) Surface pressure
+     d) 10m u-component of wind
+     e) 10m v-component of wind
+     f) data
+     g) godzina (Proponuję zawsze ustawiać 12:00)
+     h) Sub-region extraction (North: 54.37, South: 54.12, West 18.38, East: 18.63)
+     i) NetCDF4
+     j) Zip
 
-def run_single_simulation(i, rocket, environment, flight):
+
+    2. ERA5 hourly data on pressure levels from 1940 to present
+    https://cds.climate.copernicus.eu/datasets/reanalysis-era5-pressure-levels?tab=overview
+     a) reanalysis
+     b) geopotential
+     c) temperature
+     d) u-component of wind
+     e) v-component of wind
+     f) data
+     g) godzina (Proponuję zawsze ustawiać 12:00)
+     h) Pressure level (tu klikamy select all)
+     i) Sub-region extraction (North: 54.37, South: 54.12, West 18.38, East: 18.63)
+     j) NetCDF4
+     k) Zip
+    '''
+
+    dir = os.path.dirname(__file__)
+    pl = xr.open_dataset(os.path.join(dir, f"../../source_model/ERA5_weather/levels/{environment_data["path"]}"))
+    sl = xr.open_dataset(os.path.join(dir, f"../../source_model/ERA5_weather/single/{environment_data["path"]}"))
+
+    g = 9.80665
+    geo = pl["z"].data[0].flatten() # geopotential
+    H = geo  / g  # height
+    T = pl["t"].data[0].flatten() # temperature
+    U = pl["u"].data[0].flatten() # u-wind
+    V = pl["v"].data[0].flatten() # v-wind
+
+    t2m = sl["t2m"].data[0].item() # 2 meters temperature
+    u10 = sl["u10"].data[0].item() # 10 meters u-wind
+    v10 = sl["v10"].data[0].item() # 10 meters v-wind
+
+    h = np.insert(H, 0, 2.0)
+    T = np.insert(T, 0, t2m)
+    U = np.insert(U, 0, u10)
+    V = np.insert(V, 0, v10)
+
+    h_new = np.linspace(0, 30000, 200)
+    T_new = interp1d(h, T, fill_value="extrapolate")(h_new)
+    U_new = interp1d(h, U, fill_value="extrapolate")(h_new)
+    V_new = interp1d(h, V, fill_value="extrapolate")(h_new)
+
+    env = Environment(
+        latitude = environment_data["latitude"],
+        longitude = environment_data["longitude"],
+        elevation = environment_data["elevation"]
+    )
+
+    # todo w tym momencie mozna nakladac szumy na atmosfere
+
+    temp_profile = np.column_stack((h_new, T_new))
+    u_profile = np.column_stack((h_new, U_new))
+    v_profile = np.column_stack((h_new, V_new))
+
+    env.set_atmospheric_model(
+        type="custom_atmosphere",
+        temperature=temp_profile,
+        wind_u=u_profile,
+        wind_v=v_profile,
+    )
+
+    return env
+
+def run_single_simulation(i, rocket, environment_data, flight):
     current_flight = Flight(
             heading=flight.heading,
-            environment=environment,
+            environment=create_new_environment(environment_data),
             rocket=rocket,
             rail_length=flight.rail_length
             )
     #for parquet data saving and packing (comment out lines below)
     # |
-    file_name = f"output/flight_{i}.out"
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, f"output/flight_{i}.out")
     with open(file_name, 'w+') as file:
             for sample in current_flight.solution:
                 file.write(rp_solution_arr_str(sample) + '\n')
@@ -59,17 +137,6 @@ def run_single_simulation(i, rocket, environment, flight):
             accel_data.append({
                     "df": frame,
                     "range": sensor.measurement_range,
-                    "name": sensor.name
-                })
-        elif isinstance(sensor , (GnssReceiver)):
-            cols = ["Time", f"{sensor.name}_Lat", f"{sensor.name}_Lon", f"{sensor.name}_Alt"]
-            gnss_data_matrix = np.array(sensor.measured_data)
-            frame = pd.DataFrame(gnss_data_matrix[:, :4], columns=cols)
-            frame.set_index("Time", inplace=True)
-            
-            accel_data.append({
-                    "df": frame,
-                    "range": None, 
                     "name": sensor.name
                 })
     if accel_data:
@@ -94,16 +161,11 @@ def run_single_simulation(i, rocket, environment, flight):
         all_accels_df["Best_AngVel_X"] = get_best_angular_velocity(real_angvel_x, "X", all_accels_df, angular_velocity_thresholds)
         all_accels_df["Best_AngVel_Y"] = get_best_angular_velocity(real_angvel_y, "Y", all_accels_df, angular_velocity_thresholds)
         all_accels_df["Best_AngVel_Z"] = get_best_angular_velocity(real_angvel_z, "Z", all_accels_df, angular_velocity_thresholds)
-
-        all_accels_df["Best_Lat"] = get_gnss_value(all_accels_df, "Lat")
-        all_accels_df["Best_Lon"] = get_gnss_value(all_accels_df, "Lon")
-        all_accels_df["Best_Alt"] = get_gnss_value(all_accels_df, "Alt")
-
+        
         final_cols = ["Best_Acc_X", "Best_Acc_Y", "Best_Acc_Z", 
-                      "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z",
-                      "Best_Lat", "Best_Lon", "Best_Alt"]
+                      "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z"]
         final_df = all_accels_df[final_cols].copy()
-        final_df.to_csv(f"output/flight_{i}_best_sensors.csv", index_label="Time")
+        final_df.to_csv(os.path.join(dir, f"output/flight_{i}_best_sensors.csv"), index_label="Time")
         final_df['flight_id'] = i 
 
         #for parquet data saving and packing 
