@@ -33,7 +33,6 @@ def get_best_angular_velocity(real_vals, suffix, all_accels_df, thresholds):
     return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_gyro_2000dps_{suffix}"])
 
 def create_new_environment(environment_data):
-
     '''
     Potrzebujemy 2 datasety
     1. ERA5 hourly data on single levels from 1940 to present
@@ -63,9 +62,6 @@ def create_new_environment(environment_data):
      i) Sub-region extraction (North: 54.37, South: 54.12, West 18.38, East: 18.63)
      j) NetCDF4
      k) Zip
-
-
-
     '''
 
     dir = os.path.dirname(__file__)
