@@ -5,6 +5,8 @@ from rocketpy import Flight , Accelerometer, Gyroscope, Environment
 import os
 import xarray as xr
 from scipy.interpolate import interp1d
+from logger import *
+
 
 # @BRIEF
 # cretes string based on rp.solution_array, without np.float type signature
@@ -129,6 +131,7 @@ def apply_sensor_faults(sensor_data):
 
 def apply_sensor_dropout(current_flight, frame):
     times = frame.index.values
+    Log.print_info(f"heh {len(times)}")
     for _ in range(4000):
         i = np.random.randint(0, len(times))
         ax = current_flight.ax(times[i])

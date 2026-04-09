@@ -302,7 +302,7 @@ def main():
     
     stochastic_motor_params = init_stochastic_motor_params(paths["config_path"])
     
-    flight_simulation_amount = 2
+    flight_simulation_amount = 10
 
     parallel_generator(flight_simulation_amount,
                        paths["source_model_path"]["parameters"],
