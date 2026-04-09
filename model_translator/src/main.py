@@ -54,7 +54,7 @@ def init_rocket_from_JSON(path_to_file, drag_curve_csv, motor):
             position=nose_data["position"]
             )
     Log.print_info("loading fins")
-    rocket.add_trapezoidal_fins(
+    rocket.add_trapezoidal_fins( #change when eagle lands
             n=3,
             root_chord=0.12,
             tip_chord=0.06,
@@ -116,8 +116,6 @@ def init_stochastic_motor(base_motor, stochastic_motor_params):
         grain_initial_height=grain_initial_height_param* base_motor.grain_initial_height,
         nozzle_radius=nozzle_radius_param * base_motor.nozzle_radius,
         throat_radius=throat_radius_param * base_motor.throat_radius,
-
-        # opcjonalnie, ale można dodać szum do impulsu całkowitego, co może być bardziej realistyczne niż szum w poszczególnych parametrach
         total_impulse=total_impulse_param * base_motor.total_impulse
     )
     return stochastic_motor
@@ -224,7 +222,7 @@ def add_gyro_to_rocket(rocket , gyro_list):
     gyro_list.sort(key= lambda x: x.measurement_range)
     for g in gyro_list:
         #TODO: replace 1 
-        rocket.add_sensor(g , 1)
+        rocket.add_sensor(g , 1) #change when eagle lands
     return rocket
 
 def add_acc_to_rocket(rocket , acc_list):
@@ -233,12 +231,8 @@ def add_acc_to_rocket(rocket , acc_list):
         #TODO: replace 1 
         if(TEST_FLAG):
             a.sampling_rate /= 10
-        rocket.add_sensor(a , 1)
+        rocket.add_sensor(a , 1) #change when eagle lands
     return rocket
-
-def test_stochastic_motor(stochastic_motor):
-        sampled_motor = stochastic_motor.create_object()
-        print("grain_density =", sampled_motor.grain_density)
 
 def init_stochastic_motor_params(path):
     dir = os.path.dirname(__file__)
@@ -275,20 +269,12 @@ def parallel_generator(N, json_path, drag_path, environment, heading , rail_leng
 
         rocket = init_rocket_from_JSON(json_path,drag_path,sampled_motor)
         rocket = add_acc_to_rocket(rocket, acc_list)
-        test_stochastic_motor(stochastic_motor)
         return run_single_simulation(i, rocket, environment, heading, rail_length)
     
 
     with ProcessPool() as pool:
         results = list(tqdm.tqdm(pool.imap(worker, indices), total=N, desc="Siupi dupi Grzesiu dawaj"))
 
-    #for parquet data saving and packing 
-    # |
-    # print("Pakowanko...")
-    # master_df = pd.concat(results)
-    # master_df.reset_index(inplace=True)
-    # master_df.to_parquet("dataset_packed.parquet", index=True)
-    # |
   
 def main():
     global TEST_FLAG
@@ -299,7 +285,7 @@ def main():
     
     paths = init_paths_from_json("paths.json")
     environment = get_environment_data_from_JSON(paths["config_path"])
-    
+
     acc_list = [] 
     acc_list.append(init_accelerometer_from_JSON(paths["sensors_path"]["accelerometer"],"LSM9DS1_acc_2g"))
     acc_list.append(init_accelerometer_from_JSON(paths["sensors_path"]["accelerometer"],"LSM9DS1_acc_4g"))
@@ -316,7 +302,9 @@ def main():
     
     stochastic_motor_params = init_stochastic_motor_params(paths["config_path"])
     
-    parallel_generator(2,
+    flight_simulation_amount = 2
+
+    parallel_generator(flight_simulation_amount,
                        paths["source_model_path"]["parameters"],
                        paths["source_model_path"]["drag_curve"],
                        environment,heading,

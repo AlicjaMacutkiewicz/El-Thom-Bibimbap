@@ -216,3 +216,17 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
         # | 
         # return final_df
         # |
+
+
+
+
+
+#.....
+    #wiktor wie lepiej 
+    #for parquet data saving and packing 
+    # |
+    # print("Pakowanko...")
+    # master_df = pd.concat(results)
+    # master_df.reset_index(inplace=True)
+    # master_df.to_parquet("dataset_packed.parquet", index=True)
+    # |
