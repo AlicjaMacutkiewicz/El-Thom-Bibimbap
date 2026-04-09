@@ -21,6 +21,8 @@ class Log(object):
 
     @staticmethod
     def write_to_file(msg):
+        if not os.path.exists("output"):
+            os.mkdir("output")
         if not os.path.isfile("output/logs.txt"):
             open("output/logs.txt", "w").close()
         with open("output/logs.txt", "a+") as f:
