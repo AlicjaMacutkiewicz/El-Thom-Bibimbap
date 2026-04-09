@@ -237,7 +237,7 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
         # |
 
     if gnss_data:
-        all_gnsss_df = pd.concat([item["df"] for item in accel_data], axis=1)
+        all_gnsss_df = pd.concat([item["df"] for item in gnss_data], axis=1)
         all_gnsss_df.to_csv(f"output/flight_{i}_best_gnss.csv", index_label="Time")
 
 #.....
