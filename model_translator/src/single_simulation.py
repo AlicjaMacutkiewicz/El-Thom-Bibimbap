@@ -132,8 +132,8 @@ def apply_sensor_faults(sensor_data):
 
 def apply_sensor_dropout(current_flight, frame):
     times = frame.index.values
-    Log.print_info(f"heh {len(times)}")
-    for _ in range(4000):
+    # Log.print_info(f"heh {len(times)}")
+    for _ in range(len(times)//10):
         i = np.random.randint(0, len(times))
         ax = current_flight.ax(times[i])
         ay = current_flight.ay(times[i])
@@ -192,7 +192,8 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
                 "range": sensor.measurement_range,
                 "name": sensor.name
             })
-
+    
+    # Log.print_info(f"majster wihajster  {len(accel_data)} {len(gnss_data)}")
     if accel_data:
         all_accels_df = pd.concat([item["df"] for item in accel_data], axis=1)
         all_accels_df.dropna(inplace=True)
