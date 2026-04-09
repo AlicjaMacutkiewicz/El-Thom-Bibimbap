@@ -1,8 +1,10 @@
+import datetime
 import numpy as np
 import pandas as pd
 from rocketpy import Flight , Accelerometer, Gyroscope, Environment
 import os
 import xarray as xr
+from enviroment_api import * 
 from scipy.interpolate import interp1d
 from logger import *
 
@@ -34,86 +36,88 @@ def get_best_angular_velocity(real_vals, suffix, all_accels_df, thresholds): #ch
     return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_gyro_2000dps_{suffix}"])
 
 def create_new_environment(environment_data):
-    '''
-    Potrzebujemy 2 datasety
-    1. ERA5 hourly data on single levels from 1940 to present
-    https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview
-     a) reanalysis
-     b) 2m temperature
-     c) Surface pressure
-     d) 10m u-component of wind
-     e) 10m v-component of wind
-     f) data
-     g) godzina (Proponuję zawsze ustawiać 12:00)
-     h) Sub-region extraction (North: 54.37, South: 54.12, West 18.38, East: 18.63)
-     i) NetCDF4
-     j) Zip
-
-
-    2. ERA5 hourly data on pressure levels from 1940 to present
-    https://cds.climate.copernicus.eu/datasets/reanalysis-era5-pressure-levels?tab=overview
-     a) reanalysis
-     b) geopotential
-     c) temperature
-     d) u-component of wind
-     e) v-component of wind
-     f) data
-     g) godzina (Proponuję zawsze ustawiać 12:00)
-     h) Pressure level (tu klikamy select all)
-     i) Sub-region extraction (North: 54.37, South: 54.12, West 18.38, East: 18.63)
-     j) NetCDF4
-     k) Zip
-    '''
-
-    dir = os.path.dirname(__file__)
-    pl = xr.open_dataset(os.path.join(dir, f"../../source_model/ERA5_weather/levels/{environment_data['path']}"))
-    sl = xr.open_dataset(os.path.join(dir, f"../../source_model/ERA5_weather/single/{environment_data['path']}"))
-
-    g = 9.80665
-    geo = pl["z"].data[0].flatten() # geopotential
-    H = geo  / g  # height
-    T = pl["t"].data[0].flatten() # temperature
-    U = pl["u"].data[0].flatten() # u-wind
-    V = pl["v"].data[0].flatten() # v-wind
-
-    t2m = sl["t2m"].data[0].item() # 2 meters temperature
-    u10 = sl["u10"].data[0].item() # 10 meters u-wind
-    v10 = sl["v10"].data[0].item() # 10 meters v-wind
-
-    h = np.insert(H, 0, 2.0)
-    T = np.insert(T, 0, t2m)
-    U = np.insert(U, 0, u10)
-    V = np.insert(V, 0, v10)
-
-    h_new = np.linspace(2, 30000, 200)
-    T_new = interp1d(h, T, fill_value="extrapolate")(h_new)
-    U_new = interp1d(h, U, fill_value="extrapolate")(h_new)
-    V_new = interp1d(h, V, fill_value="extrapolate")(h_new)
-
+    # '''
+    # Potrzebujemy 2 datasety
+    # 1. ERA5 hourly data on single levels from 1940 to present
+    # https://cds.climate.copernicus.eu/datasets/reanalysis-era5-single-levels?tab=overview
+    #  a) reanalysis
+    #  b) 2m temperature
+    #  c) Surface pressure
+    #  d) 10m u-component of wind
+    #  e) 10m v-component of wind
+    #  f) data
+    #  g) godzina (Proponuję zawsze ustawiać 12:00)
+    #  h) Sub-region extraction (North: 54.37, South: 54.12, West 18.38, East: 18.63)
+    #  i) NetCDF4
+    #  j) Zip
     #
-    #   HEJ TU WIKTOR WSTAILEM TE DWIE LINI POD TYM KOMENTARZREM ZEBY JUST 
-    # WYNIKI BYLO LOSOWE W RAZIE LEPSZEGO ROZWIAZANIA PROSZE JE USUNAC
     #
-    # U_new += np.random.normal(0, 1.5, size=U_new.shape)
-    # V_new += np.random.normal(0, 1.5, size=V_new.shape)
-    env = Environment(
-        latitude = environment_data["latitude"],
-        longitude = environment_data["longitude"],
-        elevation = environment_data["elevation"]
-    )
-
-    # todo w tym momencie mozna nakladac szumy na atmosfere
-
-    temp_profile = np.column_stack((h_new, T_new))
-    u_profile = np.column_stack((h_new, U_new))
-    v_profile = np.column_stack((h_new, V_new))
-
-    env.set_atmospheric_model(
-        type="custom_atmosphere",
-        temperature=temp_profile,
-        wind_u=u_profile,
-        wind_v=v_profile,
-    )
+    # 2. ERA5 hourly data on pressure levels from 1940 to present
+    # https://cds.climate.copernicus.eu/datasets/reanalysis-era5-pressure-levels?tab=overview
+    #  a) reanalysis
+    #  b) geopotential
+    #  c) temperature
+    #  d) u-component of wind
+    #  e) v-component of wind
+    #  f) data
+    #  g) godzina (Proponuję zawsze ustawiać 12:00)
+    #  h) Pressure level (tu klikamy select all)
+    #  i) Sub-region extraction (North: 54.37, South: 54.12, West 18.38, East: 18.63)
+    #  j) NetCDF4
+    #  k) Zip
+    # '''
+    #
+    # dir = os.path.dirname(__file__)
+    # pl = xr.open_dataset(os.path.join(dir, f"../../source_model/ERA5_weather/levels/{environment_data['path']}"))
+    # sl = xr.open_dataset(os.path.join(dir, f"../../source_model/ERA5_weather/single/{environment_data['path']}"))
+    #
+    # g = 9.80665
+    # geo = pl["z"].data[0].flatten() # geopotential
+    # H = geo  / g  # height
+    # T = pl["t"].data[0].flatten() # temperature
+    # U = pl["u"].data[0].flatten() # u-wind
+    # V = pl["v"].data[0].flatten() # v-wind
+    #
+    # t2m = sl["t2m"].data[0].item() # 2 meters temperature
+    # u10 = sl["u10"].data[0].item() # 10 meters u-wind
+    # v10 = sl["v10"].data[0].item() # 10 meters v-wind
+    #
+    # h = np.insert(H, 0, 2.0)
+    # T = np.insert(T, 0, t2m)
+    # U = np.insert(U, 0, u10)
+    # V = np.insert(V, 0, v10)
+    #
+    # h_new = np.linspace(2, 30000, 200)
+    # T_new = interp1d(h, T, fill_value="extrapolate")(h_new)
+    # U_new = interp1d(h, U, fill_value="extrapolate")(h_new)
+    # V_new = interp1d(h, V, fill_value="extrapolate")(h_new)
+    #
+    # #
+    # #   HEJ TU WIKTOR WSTAILEM TE DWIE LINI POD TYM KOMENTARZREM ZEBY JUST 
+    # # WYNIKI BYLO LOSOWE W RAZIE LEPSZEGO ROZWIAZANIA PROSZE JE USUNAC
+    # #
+    # # U_new += np.random.normal(0, 1.5, size=U_new.shape)
+    # # V_new += np.random.normal(0, 1.5, size=V_new.shape)
+    # env = Environment(
+    #     latitude = environment_data["latitude"],
+    #     longitude = environment_data["longitude"],
+    #     elevation = environment_data["elevation"]
+    # )
+    #
+    # # todo w tym momencie mozna nakladac szumy na atmosfere
+    #
+    # temp_profile = np.column_stack((h_new, T_new))
+    # u_profile = np.column_stack((h_new, U_new))
+    # v_profile = np.column_stack((h_new, V_new))
+    #
+    # env.set_atmospheric_model(
+    #     type="custom_atmosphere",
+    #     temperature=temp_profile,
+    #     wind_u=u_profile,
+    #     wind_v=v_profile,
+    # )
+    #
+    env = get_enviroment_from_date(environment_data, datetime.datetime(2002,10,10,0,0), "sranie_w_banie");
 
     return env
 
