@@ -21,7 +21,7 @@ class Log(object):
 
     @staticmethod
     def write_to_file(msg):
-        with open("output/logs.txt", "w+") as f:
+        with open("output/logs.txt", "a+") as f:
             f.write(msg + '\n')
 
     @staticmethod
