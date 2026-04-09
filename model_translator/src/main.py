@@ -296,11 +296,10 @@ def main():
         if sys.argv[1] == 'test':
             TEST_FLAG = True
             Log.print_warning("RUNNING IN TEST MODE")
-    json_path = "../../source_model/APEX_OUTPUT/parameters.json"
-    drag_path= "../../source_model/APEX_OUTPUT/drag_curve.csv"
-    thrust_path= "../../source_model/APEX_OUTPUT/thrust_source.csv"
     
-
+    paths = init_paths_from_json("paths.json")
+    environment = get_environment_data_from_JSON(paths["config_path"])
+    
     acc_list = [] 
     acc_list.append(init_accelerometer_from_JSON(paths["sensors_path"]["accelerometer"],"LSM9DS1_acc_2g"))
     acc_list.append(init_accelerometer_from_JSON(paths["sensors_path"]["accelerometer"],"LSM9DS1_acc_4g"))
