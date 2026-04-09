@@ -16,12 +16,12 @@ Do zrobienia:
 #(WIKTOR)    9. Poprawa raportowania stanu przetwarzania (jakiś output ile już mamy przemielone a ile jeszcze nie)
 
 --- ETAP 2 ---
-10. code review tego co już mamy
-11. optymalizacja jeśli jest jeszcze co
-12. dodanie szumu na sygnał wyjściowy (jeśli ma to sens)
-13. zaraportowanie dokładnie co i dlaczego mamy zrobione
-14. zamiana konkretnych danych pojazdu na R7
-15. kontrola czy scenariusze się nie duplikują za bardzo i dobór tak ich ilości żeby tego uniknąć
-16. zamiana formatu zapisu danych na parquet albo inny kolumnowy 
-17. spuszczenie Grzecha z smyczy
+(RAZEM AZ)  10. code review tego co już mamy
+(RAZEM AZ)  11. optymalizacja jeśli jest jeszcze co
+(M + WERKA) 12. zaraportowanie dokładnie co i dlaczego mamy zrobione
+(WERONIKA)  13. zamiana konkretnych danych pojazdu na R7
+(EMILIA)    14. kontrola czy scenariusze się nie duplikują za bardzo i dobór tak ich ilości żeby tego uniknąć
+(EMILIA)    15. zamiana formatu zapisu danych na parquet albo inny kolumnowy 
+(PAWEŁ)     16. logowanie do osobnego pliku
+(RAZEM AZ)  17. spuszczenie Grzecha z smyczy
 
