@@ -26,7 +26,6 @@ def rp_solution_arr_str(data):
 #helper function for 'run_single_simulation'
 def get_best_acceleration(real_vals, suffix, all_accels_df, thresholds):
     cond = [np.abs(real_vals) < t for t in thresholds]
-    print(real_vals)
     choices = [all_accels_df[f"LSM9DS1_acc_{g}g_{suffix}"] for g in [2, 4, 8]]
     return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_acc_16g_{suffix}"])
 
@@ -132,27 +131,25 @@ def apply_sensor_faults(sensor_data):
 
 def apply_sensor_dropout(current_flight, frame):
     times = frame.index.values
-    # Log.print_info(f"heh {len(times)}")
+    if len(times) == 0:
+        return frame
     for _ in range(len(times)//10):
         i = np.random.randint(0, len(times))
+        
         ax = current_flight.ax(times[i])
         ay = current_flight.ay(times[i])
         az = current_flight.az(times[i])
         g_force = np.sqrt(ax**2 + ay**2 + az**2) / 9.80665
-    
         alt = current_flight.z(times[i])
-
-        wind_u = current_flight.env.wind_velocity_x(alt)
-        wind_v = current_flight.env.wind_velocity_y(alt)
-
-        wind_speed = np.sqrt(wind_u**2 + wind_v**2)
+        wind_speed = np.sqrt(current_flight.env.wind_velocity_x(alt)**2 + 
+                             current_flight.env.wind_velocity_y(alt)**2)
 
         drop_rate = np.clip(0.001 + 0.002*wind_speed + (g_force-4)*0.01, 0, 1)
         
         if np.random.rand() < drop_rate:
-            dropout_interval = np.random.randint(1000, 10000)
-            for j in range(i, i+dropout_interval):
-                frame.iloc[j] = np.nan
+            dropout_interval = np.random.randint(50, 500) 
+            frame.iloc[i : i + dropout_interval] = np.nan
+            
     return frame
 
 def run_single_simulation(i, rocket, environment_data, heading , rail_length):
@@ -162,16 +159,16 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
             rocket=rocket,
             rail_length=rail_length
             )
-    #for parquet data saving and packing (comment out lines below)
-    # |
+ 
     dir = os.path.dirname(__file__)
     file_name = os.path.join(dir, f"output/flight_{i}.out")
     with open(file_name, 'w+') as file:
             for sample in current_flight.solution:
                 file.write(rp_solution_arr_str(sample) + '\n')
-    # |
     accel_data = []
     gnss_data = []
+    acceleration_thresholds = [0, 0, 0]         #m/s^2
+    angular_velocity_thresholds = [0, 0]        #dps
 
     for sensor_tuple in rocket.sensors:
         sensor = sensor_tuple.component
@@ -183,32 +180,21 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
         if isinstance(sensor , (Accelerometer, Gyroscope)):
             accel_data.append({
                     "df": frame,
-                    "range": sensor.measurement_range,
+                    # "range": sensor.measurement_range,
                     "name": sensor.name
                 })
         if isinstance(sensor , (GnssReceiver)):
             gnss_data.append({
                 "df": frame,
-                "range": sensor.measurement_range,
+                # "range": sensor.measurement_range,
                 "name": sensor.name
             })
     
     # Log.print_info(f"majster wihajster  {len(accel_data)} {len(gnss_data)}")
-    if accel_data:
+    if accel_data and gnss_data:
         all_accels_df = pd.concat([item["df"] for item in accel_data], axis=1)
-        all_accels_df.dropna(inplace=True)
-        times_array = all_accels_df.index.values
-        
-        real_acc_x = np.array([current_flight.ax(t) for t in times_array])
-        real_acc_y = np.array([current_flight.ay(t) for t in times_array])
-        real_acc_z = np.array([current_flight.az(t) for t in times_array])
-        
-        real_angvel_x = np.array([current_flight.w1(t) for t in times_array])
-        real_angvel_y = np.array([current_flight.w2(t) for t in times_array])
-        real_angvel_z = np.array([current_flight.w3(t) for t in times_array])
+        all_gnsss_df = pd.concat([item["df"] for item in gnss_data], axis=1)
 
-        acceleration_thresholds = [0, 0, 0] #m/s^2
-        angular_velocity_thresholds = [0, 0]           #dps
         with open('config.json', 'r') as file:
             data = json.load(file)
             acceleration_thresholds[0] = data["thresholds"]["acceleration"]["X"]
@@ -218,46 +204,40 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
             angular_velocity_thresholds[0] = data["thresholds"]["angular_velocity"]["Small"]
             angular_velocity_thresholds[1] = data["thresholds"]["angular_velocity"]["Big"]
 
-        all_accels_df["Best_Acc_X"] = get_best_acceleration(real_acc_x, "X", all_accels_df, acceleration_thresholds)
-        all_accels_df["Best_Acc_Y"] = get_best_acceleration(real_acc_y, "Y", all_accels_df, acceleration_thresholds)
-        all_accels_df["Best_Acc_Z"] = get_best_acceleration(real_acc_z, "Z", all_accels_df, acceleration_thresholds) 
+
+        master_index = all_accels_df.index.union(all_gnsss_df.index).sort_values()
+
+        combined_df = pd.concat([all_accels_df, all_gnsss_df], axis=1).reindex(master_index)
+        combined_df = combined_df.ffill().bfill()
+
+  
+        times_array = combined_df.index.values
         
-        all_accels_df["Best_AngVel_X"] = get_best_angular_velocity(real_angvel_x, "X", all_accels_df, angular_velocity_thresholds)
-        all_accels_df["Best_AngVel_Y"] = get_best_angular_velocity(real_angvel_y, "Y", all_accels_df, angular_velocity_thresholds)
-        all_accels_df["Best_AngVel_Z"] = get_best_angular_velocity(real_angvel_z, "Z", all_accels_df, angular_velocity_thresholds)
-    # return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_gyro_2000dps_{suffix}"])
-        all_gnsss_df = pd.concat([item["df"] for item in gnss_data], axis=1)
-        all_gnsss_df.dropna(inplace=True)
-        times_array = all_accels_df.index.values
-      
-      
-        all_accels_df["GNSS_X"] = all_gnsss_df["u-blox_MAX-M10S_X"]
-        all_accels_df["GNSS_Y"] = all_gnsss_df["u-blox_MAX-M10S_Y"]
-        all_accels_df["GNSS_Z"] = all_gnsss_df["u-blox_MAX-M10S_Z"]
+        real_acc_x = np.array([current_flight.ax(t) for t in times_array])
+        real_acc_y = np.array([current_flight.ay(t) for t in times_array])
+        real_acc_z = np.array([current_flight.az(t) for t in times_array])
+        
+        real_angvel_x = np.array([current_flight.w1(t) for t in times_array])
+        real_angvel_y = np.array([current_flight.w2(t) for t in times_array])
+        real_angvel_z = np.array([current_flight.w3(t) for t in times_array])
+        
+        combined_df["Best_Acc_X"] = get_best_acceleration(real_acc_x, "X", combined_df, acceleration_thresholds)
+        combined_df["Best_Acc_Y"] = get_best_acceleration(real_acc_y, "Y", combined_df, acceleration_thresholds)
+        combined_df["Best_Acc_Z"] = get_best_acceleration(real_acc_z, "Z", combined_df, acceleration_thresholds) 
+        
+        combined_df["Best_AngVel_X"] = get_best_angular_velocity(real_angvel_x, "X", combined_df, angular_velocity_thresholds)
+        combined_df["Best_AngVel_Y"] = get_best_angular_velocity(real_angvel_y, "Y", combined_df, angular_velocity_thresholds)
+        combined_df["Best_AngVel_Z"] = get_best_angular_velocity(real_angvel_z, "Z", combined_df, angular_velocity_thresholds)
+   
+        gnss_name = "u-blox_MAX-M10S"
+        combined_df["GNSS_X"] = combined_df[f"{gnss_name}_X"]
+        combined_df["GNSS_Y"] = combined_df[f"{gnss_name}_Y"]
+        combined_df["GNSS_Z"] = combined_df[f"{gnss_name}_Z"]
+    
         final_cols = ["Best_Acc_X", "Best_Acc_Y", "Best_Acc_Z", 
                       "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z", "GNSS_X","GNSS_Y","GNSS_Z"]
-        almost_df = all_accels_df[final_cols].copy()
-        # all_gnsss_df = pd.concat([item["df"] for item in gnss_data], axis=1)
-        # final_df = pd.concat([almost_df,all_gnsss_df])
-        final_df = almost_df
-        final_df.to_csv(os.path.join(dir, f"output/flight_{i}_best_sensors.csv"), index_label="Time")
+        final_df = combined_df[final_cols].copy()
         final_df['flight_id'] = i 
+        final_df.to_csv(os.path.join(dir, f"output/flight_{i}_best_sensors.csv"), index_label="Time")
 
-        #for parquet data saving and packing 
-        # | 
-        # return final_df
-        # |
-
-    # if gnss_data:
-    #     all_gnsss_df = pd.concat([item["df"] for item in gnss_data], axis=1)
-    #     all_gnsss_df.to_csv(f"output/flight_{i}_best_gnss.csv", index_label="Time")
-
-#.....
-    #wiktor wie lepiej 
-    #for parquet data saving and packing 
-    # |
-    # print("Pakowanko...")
-    # master_df = pd.concat(results)
-    # master_df.reset_index(inplace=True)
-    # master_df.to_parquet("dataset_packed.parquet", index=True)
-    # |
+        return final_df
