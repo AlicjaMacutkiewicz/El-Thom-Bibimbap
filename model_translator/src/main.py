@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
+import os
 import sys
 import json
 import datetime
@@ -37,9 +38,11 @@ def print_warning(msg):
 #     rocket -> Initialized rocketpy::Rocket class 
 
 def init_rocket_from_JSON(path_to_file, drag_curve_csv, motor):
-    with open(path_to_file, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8')as file:
         data= json.load(file)
-    print_info(f"Reading from {path_to_file}")
+    print_info(f"Reading from {file_name}")
 
     name = data['id']['rocket_name']
 
@@ -86,10 +89,12 @@ def init_rocket_from_JSON(path_to_file, drag_curve_csv, motor):
     return rocket
 
 def init_base_motor_from_JSON(path_to_file, thrust_source_csv):
-    with open(path_to_file, 'r', encoding='utf-8') as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8') as file:
         data = json.load(file)
 
-    print_info(f"Reading from {path_to_file}")
+    print_info(f"Reading from {file_name}")
     motor_data = data["motors"]
 
     print_info("loading base motor")
@@ -133,16 +138,20 @@ def init_stochastic_motor(base_motor, stochastic_motor_params):
     return stochastic_motor
 
 def get_environment_data_from_JSON(path_to_file):
-    with open(path_to_file, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8')as file:
         data= json.load(file)
-    print_info(f"Reading from {path_to_file}")
+    print_info(f"Reading from {file_name}")
     env_data = data["environment"]
     return env_data
 
 def init_environment_from_JSON(path_to_file):
-    with open(path_to_file, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8')as file:
         data= json.load(file)
-    print_info(f"Reading from {path_to_file}")
+    print_info(f"Reading from {file_name}")
     env_data = data["environment"]
    
 
@@ -158,16 +167,20 @@ def init_environment_from_JSON(path_to_file):
     return env
 
 def init_flight_config_from_JSON(path_to_file):
-    with open(path_to_file, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8')as file:
         data= json.load(file)
-    print_info(f"Reading from {path_to_file}")
+    print_info(f"Reading from {file_name}")
     flight_data = data["flight"]
     heading=flight_data["heading"]
     rail_length=flight_data["rail_length"]
     return (heading ,  rail_length)
 
 def init_accelerometer_from_JSON(path_to_file, name):
-    with open(path_to_file, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8')as file:
         data= json.load(file)
     accel_data = data[name]
     accelerometer = Accelerometer(
@@ -187,7 +200,9 @@ def init_accelerometer_from_JSON(path_to_file, name):
     return accelerometer
 
 def init_gyroscope_from_JSON(path_to_file, name):
-    with open(path_to_file, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8')as file:
         data= json.load(file)
     gyro_data = data[name]
     gyroscope = Gyroscope(
@@ -207,7 +222,9 @@ def init_gyroscope_from_JSON(path_to_file, name):
     return gyroscope
 
 def init_gnss_from_JSON(path_to_file, name):
-    with open(path_to_file, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path_to_file)
+    with open(file_name, 'r', encoding='utf-8')as file:
         data= json.load(file)
     gnss_data = data[name]
     gnss = GnssReceiver(
@@ -239,7 +256,9 @@ def test_stochastic_motor(stochastic_motor):
         print("grain_density =", sampled_motor.grain_density)
 
 def init_stochastic_motor_params(path):
-    with open(path, 'r', encoding='utf-8')as file:
+    dir = os.path.dirname(__file__)
+    file_name = os.path.join(dir, path)
+    with open(file_name, 'r', encoding='utf-8')as file:
         dataset= json.load(file)
 
     motor_data = dataset["stochastic_motor_params"]
@@ -301,7 +320,7 @@ def main():
     acc_list.append(init_gyroscope_from_JSON("../sensors/gyroscope.json","LSM9DS1_gyro_2000dps"))
     acc_list.append(init_gnss_from_JSON("../sensors/gnss_velocity_heading.json","u-blox_MAX-M10S"))
 
-    (heading ,  rail_length) = init_flight_config_from_JSON("config.json")
+    heading, rail_length = init_flight_config_from_JSON("config.json")
     
     stochastic_motor_params = init_stochastic_motor_params("config.json")
     parallel_generator(30,json_path,drag_path,environment,heading,rail_length,acc_list,thrust_path, stochastic_motor_params)
