@@ -1,10 +1,11 @@
-import matplotlib.pyplot as plt
+import json
+
 import numpy as np
 import pandas as pd
-from rocketpy import Flight , Accelerometer, Gyroscope, Environment
-import os
 import xarray as xr
+from rocketpy import Flight, Accelerometer, Gyroscope, Environment, GnssReceiver
 from scipy.interpolate import interp1d
+
 from logger import *
 
 
@@ -170,21 +171,28 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
                 file.write(rp_solution_arr_str(sample) + '\n')
     # |
     accel_data = []
+    gnss_data = []
 
     for sensor_tuple in rocket.sensors:
         sensor = sensor_tuple.component
-        if isinstance(sensor , (Accelerometer, Gyroscope)):
-            cols = ["Time", f"{sensor.name}_X", f"{sensor.name}_Y" , f"{sensor.name}_Z"]
-            frame = pd.DataFrame(sensor.measured_data , columns=cols)
-            frame.set_index("Time", inplace=True)
-            
-            apply_sensor_dropout(current_flight, frame)
+        cols = ["Time", f"{sensor.name}_X", f"{sensor.name}_Y", f"{sensor.name}_Z"]
+        frame = pd.DataFrame(sensor.measured_data, columns=cols)
+        frame.set_index("Time", inplace=True)
 
+        apply_sensor_dropout(current_flight, frame)
+        if isinstance(sensor , (Accelerometer, Gyroscope)):
             accel_data.append({
                     "df": frame,
                     "range": sensor.measurement_range,
                     "name": sensor.name
                 })
+        if isinstance(sensor , (GnssReceiver)):
+            gnss_data.append({
+                "df": frame,
+                "range": sensor.measurement_range,
+                "name": sensor.name
+            })
+
     if accel_data:
         all_accels_df = pd.concat([item["df"] for item in accel_data], axis=1)
         all_accels_df.dropna(inplace=True)
@@ -198,8 +206,16 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
         real_angvel_y = np.array([current_flight.w2(t) for t in times_array])
         real_angvel_z = np.array([current_flight.w3(t) for t in times_array])
 
-        acceleration_thresholds = [19.613, 39.227, 78.453] #m/s^2
-        angular_velocity_thresholds = [245, 500]           #dps
+        acceleration_thresholds = [0, 0, 0] #m/s^2
+        angular_velocity_thresholds = [0, 0]           #dps
+        with open('config.json', 'r') as file:
+            data = json.load(file)
+            acceleration_thresholds[0] = data["thresholds"]["acceleration"]["X"]
+            acceleration_thresholds[1] = data["thresholds"]["acceleration"]["Y"]
+            acceleration_thresholds[2] = data["thresholds"]["acceleration"]["Z"]
+
+            angular_velocity_thresholds[0] = data["thresholds"]["angular_velocity"]["Small"]
+            angular_velocity_thresholds[1] = data["thresholds"]["angular_velocity"]["Big"]
 
         all_accels_df["Best_Acc_X"] = get_best_acceleration(real_acc_x, "X", all_accels_df, acceleration_thresholds)
         all_accels_df["Best_Acc_Y"] = get_best_acceleration(real_acc_y, "Y", all_accels_df, acceleration_thresholds)
@@ -220,9 +236,9 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
         # return final_df
         # |
 
-
-
-
+    if gnss_data:
+        all_gnsss_df = pd.concat([item["df"] for item in accel_data], axis=1)
+        all_gnsss_df.to_csv(f"output/flight_{i}_best_gnss.csv", index_label="Time")
 
 #.....
     #wiktor wie lepiej 
