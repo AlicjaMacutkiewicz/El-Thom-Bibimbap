@@ -237,7 +237,6 @@ def run_single_simulation(i, rocket, environment_data, heading , rail_length):
         final_cols = ["Best_Acc_X", "Best_Acc_Y", "Best_Acc_Z", 
                       "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z", "GNSS_X","GNSS_Y","GNSS_Z"]
         final_df = combined_df[final_cols].copy()
-        final_df['flight_id'] = i 
         final_df.to_csv(os.path.join(dir, f"output/flight_{i}_best_sensors.csv"), index_label="Time")
 
         return final_df
