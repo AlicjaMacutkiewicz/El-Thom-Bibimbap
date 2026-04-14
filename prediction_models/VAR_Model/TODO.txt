@@ -1,12 +1,19 @@
-1. Checking stationarity for time series:
+1. Check stationarity for time series using Augmented Dickey-Fuller (ADF) Test
     (mean, variance and autocorrection must remain constant over time)
-    We can use the ADF test here
-1.1 If the data is not stationary:
-     Transforming the individual series to be stationary using differentiation
 
-2. Lag selection using information criteria: AIC and BIC 
-   (Estimating a range of models and choosing the best one)
-
-3. Creating the model using VAR
+2. If the data is not stationary check for cointegration using Johanson's Cointegration Test
+2.1 If the data is cointegrated use Vector Error Correction Model (VECM)
+    VECM is suitable for non-stationary but cointegrated time-series
+2.2 If the data is not cointegrated transform the individual series to be stationary using differentiation. 
+    Then proceed to use VAR model.
  
-4. Model diagnostic
+3. Select lag order(P) using information criteria: AIC and BIC 
+   (Estimate a range of models and choose the best one)
+
+4. Fit a VAR or VECM model with order(P)
+
+5. Train the model of selected order(P)
+
+6. For VAR model: invert transformations (such as differencing) previously performed on the data (if there were any)
+
+7. Evaluate the model using test set

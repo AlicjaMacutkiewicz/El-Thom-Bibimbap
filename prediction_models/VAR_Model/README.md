@@ -1,3 +1,5 @@
 Here prediction is done using vector Autoregressive Model (or VAR Model)
-It's appropriate for multivariate time series data. Each variable is modelled
+It's appropriate for multivariate time series data where multiple variables influence each other over time. Each variable is modelled
 as a function of its previous values and past values of other variables in the system. 
+Before using a VAR model, it is important that the time series are stationary, meaning their statistical properties such as mean and variance do not change over time. If the data is not stationary it should be transformed to make it stationary.
+Moreover, if the time series are not stationary but its cointegrated, (they move together in the long run), a Vector Error Correction Model (VECM) is used instead. VECM is an extension of VAR that also accounts for long-term relationships between the variables while still modeling short-term changes.
