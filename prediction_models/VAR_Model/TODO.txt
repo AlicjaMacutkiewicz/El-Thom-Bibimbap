@@ -2,6 +2,8 @@
     (mean, variance and autocorrection must remain constant over time)
 
 2. If the data is not stationary check for cointegration using Johanson's Cointegration Test
+   "If two or more series are themselves non-stationary, but a linear combination
+    of them is stationary, then the series are said to be cointegrated."
 2.1 If the data is cointegrated use Vector Error Correction Model (VECM)
     VECM is suitable for non-stationary but cointegrated time-series
 2.2 (Done) If the data is not cointegrated transform the time series to be stationary using differentiation. 
