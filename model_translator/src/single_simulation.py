@@ -72,10 +72,10 @@ def apply_sensor_dropout(current_flight, frame):
                 frame.iloc[j] = np.nan
     return frame
 
-def run_single_simulation(i, rocket, environment_data, heading , rail_length):
+def run_single_simulation(i, rocket, environment, heading , rail_length):
     current_flight = Flight(
             heading=heading,
-            environment=create_new_environment(environment_data),
+            environment=environment,
             rocket=rocket,
             rail_length=rail_length
             )

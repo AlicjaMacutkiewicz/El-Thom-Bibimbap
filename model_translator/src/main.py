@@ -153,7 +153,6 @@ def init_environment_from_JSON(path_to_file):
 def init_stochastic_environment(env_data, date):
     env_base = get_enviroment_from_date(env_data , date , f"ENV_DATA_"+date.strftime("%Y/%m/%d_%H:%M:%S")) 
     env = StochasticEnvironment(env_base)
-
     return env
 
 def init_flight_config_from_JSON(path_to_file):
@@ -280,7 +279,7 @@ def parallel_generator(N, json_path, drag_path, env_base, heading , rail_length,
         rocket = init_rocket_from_JSON(json_path,drag_path,base_motor)
         rocket = add_acc_to_rocket(rocket, acc_list)
 
-        st_environment = StochasticEnvironment(environment=env_base , gravity= 9 , wind_velocity_x_factor=env_base.wind_velocity_x_factor, wind_velocity_y_factor=env_base.win_velocity_y_factor) 
+        st_environment = StochasticEnvironment(environment=env_base)
         environment = st_environment.create_object()
         return run_single_simulation(i, rocket, environment, heading, rail_length)
     
