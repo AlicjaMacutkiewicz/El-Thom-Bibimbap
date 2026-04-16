@@ -4,7 +4,7 @@ import scipy
 import xarray as xr
 import numpy as np
 import pandas as pd
-from rocketpy import Flight , Accelerometer, Gyroscope, Environment
+from rocketpy import Flight , Accelerometer, Gyroscope, Environment, StochasticEnvironment
 import os
 import xarray as xr
 from scipy.interpolate import interp1d
@@ -48,7 +48,7 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
         "area": [54.37, 18.38, 54.12, 18.63]
         }
 
-    client = cdsapi.Client()
+    client = cdsapi.Client(quiet=True)
     client.retrieve(dataset, request, target_single)
     sl = xr.open_dataset(target_single)
     
@@ -85,7 +85,7 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
         "area": [54.37, 18.38, 54.12, 18.63]
     }
 
-    client = cdsapi.Client()
+    client = cdsapi.Client(quiet=True)
     client.retrieve(dataset, request, target_levels)
     pl = xr.open_dataset(target_levels)
     
@@ -116,8 +116,6 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
         elevation = environment_data["elevation"]
     )
 
-    # todo w tym momencie mozna nakladac szumy na atmosfere
-
     temp_profile = np.column_stack((h_new, T_new))
     u_profile = np.column_stack((h_new, U_new))
     v_profile = np.column_stack((h_new, V_new))
@@ -128,5 +126,9 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
         wind_u=u_profile,
         wind_v=v_profile,
     )
-
+    env.date = date    
+    # stoch_env = StochasticEnvironment(environment= env,
+    # wind_velocity_x_factor= u_profile,
+    # wind_velocity_y_factor= v_profile)
+    # env = stoch_env.create_object()
     return env

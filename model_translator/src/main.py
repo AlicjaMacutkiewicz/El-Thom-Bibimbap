@@ -6,10 +6,11 @@ import sys
 from enviroment_api import * 
 
 import tqdm
+import enviroment_api
 from logger import *
 from pathos.multiprocessing import ProcessPool
 from rocketpy import Environment, SolidMotor, Rocket, Accelerometer, Gyroscope, GnssReceiver
-from rocketpy.stochastic import StochasticSolidMotor
+from rocketpy.stochastic import StochasticEnvironment, StochasticSolidMotor
 
 from single_simulation import run_single_simulation
 
@@ -138,7 +139,6 @@ def init_environment_from_JSON(path_to_file):
     Log.print_info(f"Reading from {file_name}")
     env_data = data["environment"]
    
-
     date1 = datetime.datetime.strptime("19.03.2026", "%d.%m.%Y")
     print(date1)
     
@@ -148,6 +148,12 @@ def init_environment_from_JSON(path_to_file):
                 date=date1,
                 elevation=env_data["elevation"],
                 timezone="America/New_York")
+    return env
+
+def init_stochastic_environment(env_data, date):
+    env_base = get_enviroment_from_date(env_data , date , f"ENV_DATA_"+date.strftime("%Y/%m/%d_%H:%M:%S")) 
+    env = StochasticEnvironment(env_base)
+
     return env
 
 def init_flight_config_from_JSON(path_to_file):
@@ -259,17 +265,23 @@ def init_paths_from_json(main_paths_file):
         dataset= json.load(file)
     return dataset
     
-def parallel_generator(N, json_path, drag_path, environment, heading , rail_length,acc_list,thrust_path,stochastic_motor_params):
+def parallel_generator(N, json_path, drag_path, env_base, heading , rail_length,acc_list,thrust_path,stochastic_motor_params):
     indices = range(N) 
     def worker(i):
         np.random.seed(i)
+        
+        
+           
         base_motor = init_base_motor_from_JSON(json_path, thrust_path)
-        # stochastic_motor = init_stochastic_motor(base_motor,stochastic_motor_params)
-        # sampled_motor = stochastic_motor.create_object()
-        # stochastic_motor._set_stochastic(seed=i)
+        stochastic_motor = init_stochastic_motor(base_motor,stochastic_motor_params)
+        sampled_motor = stochastic_motor.create_object()
+        stochastic_motor._set_stochastic(seed=i)
 
         rocket = init_rocket_from_JSON(json_path,drag_path,base_motor)
         rocket = add_acc_to_rocket(rocket, acc_list)
+
+        st_environment = StochasticEnvironment(environment=env_base , gravity= 9 , wind_velocity_x_factor=env_base.wind_velocity_x_factor, wind_velocity_y_factor=env_base.win_velocity_y_factor) 
+        environment = st_environment.create_object()
         return run_single_simulation(i, rocket, environment, heading, rail_length)
     
 
@@ -286,7 +298,7 @@ def main():
             Log.print_warning("RUNNING IN TEST MODE")
     
     paths = init_paths_from_json("paths.json")
-    environment = get_environment_data_from_JSON(paths["config_path"])
+    environment_data = get_environment_data_from_JSON(paths["config_path"])
     acc_list = [] 
     acc_list.append(init_accelerometer_from_JSON(paths["sensors_path"]["accelerometer"],"LSM9DS1_acc_2g"))
     acc_list.append(init_accelerometer_from_JSON(paths["sensors_path"]["accelerometer"],"LSM9DS1_acc_4g"))
@@ -303,12 +315,13 @@ def main():
     
     stochastic_motor_params = init_stochastic_motor_params(paths["config_path"])
     
-    flight_simulation_amount = 10
-
-    parallel_generator(flight_simulation_amount,
+    flight_simulation_amount_for_scenario = 10
+    date  = datetime.datetime(2005 , 12 , 10)
+    env_base = get_enviroment_from_date(environment_data, date, "ENV_DATA_"+date.strftime("%Y-%m-%d_%H:%M"))
+    parallel_generator(flight_simulation_amount_for_scenario,
                        paths["source_model_path"]["parameters"],
                        paths["source_model_path"]["drag_curve"],
-                       environment,heading,
+                       env_base,heading,
                        rail_length,
                        acc_list,
                        paths["source_model_path"]["thrust_source"],

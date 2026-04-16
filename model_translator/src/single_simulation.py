@@ -1,7 +1,8 @@
 import datetime
 import numpy as np
 import pandas as pd
-from rocketpy import Flight , Accelerometer, Gyroscope, Environment
+from rocketpy import Flight , Accelerometer, Gyroscope, Environment, StochasticEnvironment
+
 import os
 import xarray as xr
 from enviroment_api import * 
@@ -35,8 +36,6 @@ def get_best_angular_velocity(real_vals, suffix, all_accels_df, thresholds): #ch
     choices = [all_accels_df[f"LSM9DS1_gyro_{dps}dps_{suffix}"] for dps in [245, 500]]
     return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_gyro_2000dps_{suffix}"])
 
-def create_new_environment(environment_data):
-    return env
 
 def apply_sensor_faults(sensor_data):
     chance = 1/100000
