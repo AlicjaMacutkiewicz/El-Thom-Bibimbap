@@ -7,5 +7,5 @@ def create_var(data):
     model = VAR(data)
     return model
 
-def test_var(model, data):
+def test_var(model, test_data):
     pass

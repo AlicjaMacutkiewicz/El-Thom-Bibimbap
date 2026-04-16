@@ -125,7 +125,7 @@ if __name__ == '__main__':
 
     print("start")
 
-    training_sensors = read_sensor_data('../../../model_translator/src/output/flight_0_best_sensors.csv')
+    training_sensors = read_sensor_data('../../../model_translator/src/output/flight_0_best_sensors.csv')[:50847]
 
     print("checking final difference")
 
@@ -158,4 +158,7 @@ if __name__ == '__main__':
 
         result = model.fit()
 
-        print(test_vecm(model, test_data))
+        # todo to summary chyba jest wazne
+        #summary = result.summary()
+
+        print(test_vecm(result, test_data, n=100))
