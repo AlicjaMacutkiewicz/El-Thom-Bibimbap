@@ -46,3 +46,6 @@ class Gru_Cell(tr.nn.Module):
         z = self.get_update_gate(x, h_prev)
         h_c = self.get_candidate_gate(x, h_prev)
         return (((1-z) * h_c) + (h_prev) * z)
+
+    def forward(self, x, h_prev):
+        return self.get_new_h(self, x, h_prev)

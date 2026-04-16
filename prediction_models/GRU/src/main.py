@@ -1,4 +1,4 @@
-import torch
+import torch as tr
 import torch.nn as nn
 from GRU_cell import Gru_Cell as GRUCell
 
@@ -27,7 +27,7 @@ class GRU(nn.Module):
         batch_size, seq_len, _ = x.size()
         if h0 is None:
             h = [
-                torch.zeros(batch_size, self.hidden_size, device=x.device)
+                tr.zeros(batch_size, self.hidden_size, device=x.device)
                 for _ in range(self.num_layers)
             ]
         else:
@@ -39,21 +39,19 @@ class GRU(nn.Module):
 
             layer_input = x[:, t, :]
 
-            for layer in range(self.num_layers):
-#h_t = GRUCell(x_t, h_prev)
-                h[layer] = self.layers[layer](layer_input, h[layer])
-
-                layer_input = h[layer]
+            for i, layer in enumerate(self.layers):
+                #calling forward function in this way 
+                h[i] = layer(layer_input, h[i])
+                layer_input = h[i]
 
             # warstwa liniowa
             y = self.fc(layer_input)
-
             outputs.append(y)
 
         # składanie wyników
-        outputs = torch.stack(outputs, dim=1)
+        outputs = tr.stack(outputs, dim=1)
 
         # końcowe stany ukryte
-        hn = torch.stack(h, dim=0)
+        hn = tr.stack(h, dim=0)
 
         return outputs, hn
