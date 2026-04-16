@@ -74,7 +74,10 @@ def is_cointegrated(data, col_idx = 1, det_order = -1, max_lag = 20):
 
     # Comparing test statistics with critical values
     # If trace statistic is greater than the critical value there is evidence of cointegration
-    r = sum(t > c for t, c in zip(trace, crit))
+    r = 0
+    for i in range(len(trace)):
+        if trace[i] > crit[i]:
+            r = i + 1
     return r > 0, lag_values, r
 
 def choose_model(data, final_diff_order):
@@ -118,6 +121,32 @@ def prepare_data(data, model, final_diff_order, frac):
         test_data = new_data.iloc[split:]
         return training_data, test_data
 
+# iterates through all specified parameters and chooses the best model
+# super expensive in resources
+# todo check results on fast computer
+def find_best_parameters_for_VECM(data, max_r, max_lag):
+    best_aic = np.inf
+    best_r = 1
+    best_lag = 1
+    best_result = None
+
+    for r in range(1, max_r + 1):
+        for lag in range(1, max_lag + 1):
+            try:
+                model = VECM(data, k_ar_diff=lag, coint_rank=r)
+                result = model.fit()
+
+                if result.aic < best_aic:
+                    best_aic = result.aic
+                    best_lag = lag
+                    best_r = r
+                    best_result = result
+
+            except Exception:
+                continue
+
+    return best_r, best_lag, best_result
+
 if __name__ == '__main__':
     # Reading the data from csv files
     # TODO: split the data into a testing and training sets and
@@ -144,7 +173,7 @@ if __name__ == '__main__':
     print("preparing data")
 
     # todo frac to config
-    training_data, test_data = prepare_data(training_sensors, model_type, final_diff_order, 0.8)
+    training_data, test_data = prepare_data(training_sensors, model_type, final_diff_order, 0.9)
 
     # TODO: calculate lag order here
 
@@ -157,10 +186,12 @@ if __name__ == '__main__':
         result = model.fit()
         print(test_var(model, test_data))
     else:
-        lag_order = lag_values.selected_orders["aic"]
+        #lag_order = lag_values.selected_orders["aic"]
 
-        model = create_vecm(training_data, lag_order, r)
+        r, lag, result = find_best_parameters_for_VECM(data=training_data, max_r=6, max_lag=10)
 
-        result = model.fit()
+        #model = create_vecm(training_data, lag_order, r)
 
-        print(test_vecm(result, test_data, n=1000))
+        #result = model.fit()
+
+        print(test_vecm(result, test_data, n=500))
