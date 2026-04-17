@@ -6,8 +6,8 @@
         "gnss_velocity_heading": "../sensors/gnss_velocity_heading.json"
     },
     "source_model_path": {
-        "parameters": "../../source_model/APEX_OUTPUT/parameters.json",
-        "drag_curve": "../../source_model/APEX_OUTPUT/drag_curve.csv",
-        "thrust_source": "../../source_model/APEX_OUTPUT/thrust_source.csv"
+        "parameters": "../../source_model/R7_OUTPUT/parameters.json",
+        "drag_curve": "../../source_model/R7_OUTPUT/drag_curve.csv",
+        "thrust_source": "../../source_model/R7_OUTPUT/thrust_source.csv"
     }
 }   

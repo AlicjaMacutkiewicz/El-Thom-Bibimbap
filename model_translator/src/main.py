@@ -50,13 +50,14 @@ def init_rocket_from_JSON(data, drag_curve_csv, motor):
                 position = nose_data["position"]
             )
     Log.print_info("loading fins")
-    rocket.add_trapezoidal_fins( #todo change when eagle lands
-                n = 3,
-                root_chord = 0.12,
-                tip_chord = 0.06,
-                span = 0.10,
-                position = 1.0,
-                sweep_length = 0.05
+    fins = data["trapezoidal_fins"]
+    rocket.add_trapezoidal_fins(
+                n = fins["number"],
+                root_chord = fins["root_chord"],
+                tip_chord = fins["tip_chord"],
+                span = fins["span"],
+                position = fins["position"],
+                sweep_length = fins["sweep_length"]
             )
 
     parachute_data = data["parachutes"]["0"]
@@ -87,7 +88,7 @@ def init_base_motor_from_JSON(data, thrust_source_csv):
         grains_center_of_mass_position = motor_data["grains_center_of_mass_position"],
         center_of_dry_mass_position = motor_data["center_of_dry_mass_position"],
         nozzle_position = motor_data["nozzle_position"],
-       # burn_time = 3.0,
+        burn_time = 10.0, #declared based on in third static fire test
         throat_radius = motor_data["throat_radius"],
         coordinate_system_orientation = motor_data["coordinate_system_orientation"]
     )
