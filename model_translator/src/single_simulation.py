@@ -2,7 +2,7 @@ import datetime
 import json
 import numpy as np
 import pandas as pd
-from rocketpy import Flight , Accelerometer, Gyroscope, Environment, StochasticEnvironment, GnssReceiver
+from rocketpy import Flight , Accelerometer, Gyroscope
 
 import os
 import xarray as xr
@@ -28,14 +28,14 @@ def rp_solution_arr_str(data):
 #helper function for 'run_single_simulation'
 def get_best_acceleration(real_vals, suffix, all_accels_df, thresholds): #change when eagle lands
     cond = [np.abs(real_vals) < t for t in thresholds]
-    choices = [all_accels_df[f"LSM9DS1_acc_{g}g_{suffix}"] for g in [2, 4, 8]]
-    return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_acc_16g_{suffix}"])
+    choices = [all_accels_df[f"LSM6DSOX_acc_{g}g_{suffix}"] for g in [2, 4, 8]]
+    return np.select(cond, choices, default=all_accels_df[f"LSM6DSOX_acc_16g_{suffix}"])
 
 def get_best_angular_velocity(real_vals, suffix, all_accels_df, thresholds): #change when eagle lands
     real_vals_dps = np.degrees(real_vals)
     cond = [np.abs(real_vals_dps) < t for t in thresholds]
-    choices = [all_accels_df[f"LSM9DS1_gyro_{dps}dps_{suffix}"] for dps in [245, 500]]
-    return np.select(cond, choices, default=all_accels_df[f"LSM9DS1_gyro_2000dps_{suffix}"])
+    choices = [all_accels_df[f"LSM6DSOX_gyro_{dps}dps_{suffix}"] for dps in [125, 250, 500, 1000]]
+    return np.select(cond, choices, default=all_accels_df[f"LSM6DSOX_gyro_2000dps_{suffix}"])
 
 
 def apply_sensor_faults(sensor_data, rng, chance_denominator = 100000):
@@ -74,7 +74,7 @@ def apply_sensor_dropout(current_flight, frame, rng):
 
     return frame
 
-def run_single_simulation(i, rocket, environment, heading , rail_length, rng):
+def run_single_simulation(i, rocket, environment, heading , rail_length, rng, acceleration_thresholds, angular_velocity_thresholds):
     current_flight = Flight(
             heading=heading,
             environment=environment,
@@ -83,9 +83,6 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng):
             )
     dir = os.path.dirname(__file__)
     accel_data = []
-    gnss_data = []
-    acceleration_thresholds = [0, 0, 0]         #m/s^2
-    angular_velocity_thresholds = [0, 0]        #dps
 
     for sensor_tuple in rocket.sensors:
         sensor = sensor_tuple.component
@@ -97,52 +94,20 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng):
         if isinstance(sensor , (Accelerometer, Gyroscope)):
             accel_data.append({
                     "df": frame,
-                    # "range": sensor.measurement_range,
                     "name": sensor.name
                 })
-        if isinstance(sensor , GnssReceiver):
-            gnss_data.append({
-                "df": frame,
-                # "range": sensor.measurement_range,
-                "name": sensor.name
-            })
 
-    # Log.print_info(f"majster wihajster  {len(accel_data)} {len(gnss_data)}")
-    if accel_data and gnss_data:
+    if accel_data:
         all_accels_df = pd.concat([item["df"] for item in accel_data], axis=1)
-        all_gnsss_df = pd.concat([item["df"] for item in gnss_data], axis=1)
-
-        with open('config.json', 'r') as file:
-            data = json.load(file)
-            acceleration_thresholds[0] = data["thresholds"]["acceleration"]["X"]
-            acceleration_thresholds[1] = data["thresholds"]["acceleration"]["Y"]
-            acceleration_thresholds[2] = data["thresholds"]["acceleration"]["Z"]
-
-            angular_velocity_thresholds[0] = data["thresholds"]["angular_velocity"]["Small"]
-            angular_velocity_thresholds[1] = data["thresholds"]["angular_velocity"]["Big"]
-
-
-        master_index = all_accels_df.index.union(all_gnsss_df.index).sort_values()
-
-        combined_df = pd.concat([all_accels_df, all_gnsss_df], axis=1).reindex(master_index)
-        combined_df = combined_df.ffill().bfill()
-
         times_array = all_accels_df.index.values
 
-        # todo to jest koszmarnie wolne
-        # todo wydaje mi sie ze to moze byc szybsze:
-        #  current_flight.ax(times)
-        #  Pawel
-        # TU WIKTOR, wydaje mi się że teraz powinno być faster ale nie wiem  :) 
-        real_acc_x = np.array(current_flight.ax(times_array))
-        real_acc_y = np.array(current_flight.ay(times_array))
-        real_acc_z = np.array(current_flight.az(times_array))
+        real_acc_x = np.array([current_flight.ax(t) for t in times_array])
+        real_acc_y = np.array([current_flight.ay(t) for t in times_array])
+        real_acc_z = np.array([current_flight.az(t) for t in times_array])
 
-        real_angvel_x = np.array(current_flight.w1(times_array))
-        real_angvel_y = np.array(current_flight.w2(times_array))
-        real_angvel_z = np.array(current_flight.w3(times_array))
-        acceleration_thresholds = [19.613, 39.227, 78.453] #m/s^2
-        angular_velocity_thresholds = [245, 500]           #dps
+        real_angvel_x = np.array([current_flight.w1(t) for t in times_array])
+        real_angvel_y = np.array([current_flight.w2(t) for t in times_array])
+        real_angvel_z = np.array([current_flight.w3(t) for t in times_array])
 
         all_accels_df["Best_Acc_X"] = get_best_acceleration(real_acc_x, "X", all_accels_df, acceleration_thresholds)
         all_accels_df["Best_Acc_Y"] = get_best_acceleration(real_acc_y, "Y", all_accels_df, acceleration_thresholds)
@@ -155,7 +120,7 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng):
         final_cols = ["Best_Acc_X", "Best_Acc_Y", "Best_Acc_Z", 
                       "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z"]
         final_df = all_accels_df[final_cols]
-        final_df.to_csv(os.path.join(dir, f"output/flight_{i}_test_sensors.csv"), index_label="Time")
+        # final_df.to_csv(os.path.join(dir, f"output/flight_{i}_test_sensors.csv"), index_label="Time")
         final_df['flight_id'] = i 
         Log.print_info(f"Pakowanko... {i}")
         final_df.to_parquet(f"output/flight_{i}.parquet", index=True)

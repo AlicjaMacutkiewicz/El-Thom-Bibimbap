@@ -21,14 +21,7 @@
         "total_impulse_param":0.03
     },
     "thresholds": {
-        "acceleration": {
-            "X": 19.613,
-            "Y": 39.227,
-            "Z": 78.453
-        },
-        "angular_velocity": {
-            "Small": 245,
-            "Big": 500
-        }
+        "acceleration": [19.613, 39.227, 78.453],
+        "angular_velocity": [125, 250, 500, 1000]
     }
 }

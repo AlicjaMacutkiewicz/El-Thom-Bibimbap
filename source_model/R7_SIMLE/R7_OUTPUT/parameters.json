@@ -46,8 +46,9 @@
     },
     "nosecones": {
         "base_radius": 0.08700000000000001,
-        "kind": "power",
+        "kind": "powerseries",
         "length": 0.853,
+        "power" : 0.8,
         "name": "Nose Cone",
         "position": 0.0
     },

@@ -1,13 +1,14 @@
 {
     "config_path": "config.json",
     "sensors_path": {
-        "accelerometer": "../sensors/accelerometer.json",
-        "gyroscope":"../sensors/gyroscope.json",
-        "gnss_velocity_heading": "../sensors/gnss_velocity_heading.json"
+        "accelerometer": "../../source_model/R7_SIMLE/sensors/accelerometer.json",
+        "gyroscope":"../../source_model/R7_SIMLE/sensors/gyroscope.json",
+        "barometer":"../../source_model/R7_SIMLE/sensors/barometer.json",
+        "thermometer":"../../source_model/R7_SIMLE/sensors/thermometer.json"
     },
     "source_model_path": {
-        "parameters": "../../source_model/APEX_MODELS/APEX_OUTPUT/parameters.json",
-        "drag_curve": "../../source_model/APEX_MODELS/APEX_OUTPUT/drag_curve.csv",
-		"thrust_source": "../../source_model/APEX_MODELS/APEX_OUTPUT/thrust_source.csv"
+        "parameters": "../../source_model/R7_SIMLE/R7_OUTPUT/parameters.json",
+        "drag_curve": "../../source_model/R7_SIMLE/R7_OUTPUT/drag_curve.csv",
+        "thrust_source": "../../source_model/R7_SIMLE/R7_OUTPUT/thrust_source.csv"
     }
 }   
