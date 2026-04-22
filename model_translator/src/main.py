@@ -9,7 +9,6 @@ from logger import *
 from pathos.multiprocessing import ProcessPool
 from rocketpy import Environment, SolidMotor, Rocket, Accelerometer, Gyroscope, Barometer
 from rocketpy.stochastic import StochasticEnvironment, StochasticSolidMotor
-
 from logger import *
 from single_simulation import run_single_simulation
 import cProfile

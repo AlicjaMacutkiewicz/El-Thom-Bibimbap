@@ -95,6 +95,8 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng, ac
     dir = os.path.dirname(__file__)
     accel_data = []
 
+    # rocket.motor.thrust.source()
+
     for sensor_tuple in rocket.sensors:
         sensor = sensor_tuple.component
         if len(sensor.measured_data) > 0:
@@ -137,9 +139,14 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng, ac
         all_accels_df["Best_AngVel_Z"] = get_best_angular_velocity(real_angvel_z, "Z", all_accels_df, angular_velocity_thresholds)
 
         scalar_cols = [c for c in all_accels_df.columns if c.endswith("_Value")]
-      
+        all_accels_df["Thrust"] = [rocket.motor.thrust(t) for t in times_array]
+
         final_cols = ["Best_Acc_X", "Best_Acc_Y", "Best_Acc_Z", 
-                      "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z"] + scalar_cols
+                      "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z", "Thrust"] + scalar_cols
+        
+
+        # final_cols = ["Best_Acc_X", "Best_Acc_Y", "Best_Acc_Z", 
+        #               "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z"] + scalar_cols
         
         final_df = all_accels_df[final_cols].copy()
         final_df.ffill(inplace=True)
