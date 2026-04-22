@@ -319,6 +319,11 @@ def main():
     
     stochastic_motor_params = init_stochastic_motor_params(paths["config_path"])
 
+    target_sampling_rate = 500
+    for sensor in sensor_list:
+        if hasattr(sensor, 'sampling_rate') and sensor.sampling_rate >= target_sampling_rate:
+            sensor.sampling_rate = target_sampling_rate
+
     with open(paths["config_path"], 'r') as file:
         config_data = json.load(file)
 

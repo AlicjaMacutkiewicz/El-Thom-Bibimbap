@@ -47,29 +47,40 @@ def apply_sensor_faults(sensor_data, rng, chance_denominator = 100000):
 def apply_sensor_dropout(current_flight, frame, rng):
     times = frame.index.values
     g = 9.80665
-    Log.print_info(f"sensor dropout for length {len(times)}")
-    for _ in range(len(times)//10):
-        i = np.random.randint(0, len(times))
-        ax = current_flight.ax(times[i])
-        ay = current_flight.ay(times[i])
-        az = current_flight.az(times[i])
-        g_force = np.sqrt(ax**2 + ay**2 + az**2) / g
+    raw_data = frame.values.astype(float).copy() 
     
-        alt = current_flight.z(times[i])
+    iterations = len(times) // 10
+    
+    random_indices = rng.integers(0, len(times), size=iterations)
+    drop_times = times[random_indices]
+    
+    ax_vals = fast_extract(current_flight.ax, drop_times)
+    ay_vals = fast_extract(current_flight.ay, drop_times)
+    az_vals = fast_extract(current_flight.az, drop_times)
+    alts = fast_extract(current_flight.z, drop_times)
+    
+    g_forces = np.sqrt(ax_vals**2 + ay_vals**2 + az_vals**2) / g
+    
+    wind_u = np.array([current_flight.env.wind_velocity_x(alt) for alt in alts])
+    wind_v = np.array([current_flight.env.wind_velocity_y(alt) for alt in alts])
+    wind_speeds = np.sqrt(wind_u**2 + wind_v**2)
 
-        wind_u = current_flight.env.wind_velocity_x(alt)
-        wind_v = current_flight.env.wind_velocity_y(alt)
-
-        wind_speed = np.sqrt(wind_u**2 + wind_v**2)
-
-        drop_rate = np.clip(0.001 + 0.002*wind_speed + (g_force-4)*0.01, 0, 1)
-
-        if rng.random() < drop_rate:
+    drop_rates = np.clip(0.001 + 0.002 * wind_speeds + (g_forces - 4) * 0.01, 0, 1)
+    random_rolls = rng.random(size=iterations)
+    
+    for k in range(iterations):
+        if random_rolls[k] < drop_rates[k]:
+            i = random_indices[k]
             dropout_interval = rng.integers(50, 500)
-            frame.iloc[i : i + dropout_interval] = np.nan
+            
+            end_idx = min(i + dropout_interval, len(times))
+            raw_data[i:end_idx, :] = np.nan
+
+    frame.iloc[:, :] = raw_data
+    frame.ffill(inplace=True)
+    frame.bfill(inplace=True)
 
     return frame
-
 
 def fast_extract(rp_func, times):
     return np.interp(times, rp_func.x_array, rp_func.y_array)
@@ -106,6 +117,7 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng, ac
 
     if accel_data:
         all_accels_df = pd.concat([item["df"] for item in accel_data], axis=1)
+        all_accels_df.sort_index(inplace=True)
         times_array = all_accels_df.index.values
 
         real_acc_x = fast_extract(current_flight.ax, times_array)
@@ -130,9 +142,9 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng, ac
                       "Best_AngVel_X", "Best_AngVel_Y", "Best_AngVel_Z"] + scalar_cols
         
         final_df = all_accels_df[final_cols].copy()
-        final_df[scalar_cols] = final_df[scalar_cols].ffill()
-        final_df[scalar_cols] = final_df[scalar_cols].bfill()
-        # final_df.to_csv(os.path.join(dir, f"output/flight_{i}_test_sensors.csv"), index_label="Time")
+        final_df.ffill(inplace=True)
+        final_df.bfill(inplace=True)
+        final_df.to_csv(os.path.join(dir, f"output/flight_{i}_test_sensors.csv"), index_label="Time")
         final_df['flight_id'] = i 
         Log.print_info(f"Pakowanko... {i}")
         final_df.to_parquet(f"output/flight_{i}.parquet", index=True)
