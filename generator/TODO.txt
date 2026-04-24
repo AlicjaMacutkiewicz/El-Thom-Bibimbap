@@ -26,6 +26,6 @@ Do zrobienia:
  --- ETAP 3 ---
  (PAWEŁ)    16. analiza różnic statystycznych między generowanymi lotami
  (EMILIA)   17. podsumowanie dzialania generatora, opis wprowadzonych mechanik
- (EMILIA)   18. lekkie dopasowanie do dzialania na gpu
+#(EMILIA)   18. lekkie dopasowanie do dzialania na gpu
  (RAZEM AZ) 19. spuszczenie Grzecha z smyczy
 
