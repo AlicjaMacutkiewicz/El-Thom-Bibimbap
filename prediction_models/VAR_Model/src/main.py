@@ -1,12 +1,11 @@
-import pandas as pd
-import numpy as np
-from statsmodels.tsa.api import VAR
-from statsmodels.tsa.vector_ar.vecm import coint_johansen
+from sklearn.preprocessing import StandardScaler
 from statsmodels.tsa.stattools import adfuller
+from statsmodels.tsa.vector_ar.vecm import coint_johansen
 
 from var import *
 from vecm import *
- 
+
+
 def read_sensor_data(directory, index='Time'):
     sensors = pd.read_csv(directory)
     sensors.set_index(index, inplace=True)
@@ -74,7 +73,8 @@ def is_cointegrated(data, col_idx = 1, det_order = -1, max_lag = 20):
 
     # Comparing test statistics with critical values
     # If trace statistic is greater than the critical value there is evidence of cointegration
-    return sum(t > c for t, c in zip(trace, crit)) > 0, lag_values
+    r = sum(trace > crit)
+    return r > 0, lag_values, r
 
 def choose_model(data, final_diff_order):
     # if the data is already stationary we use VAR
@@ -83,17 +83,17 @@ def choose_model(data, final_diff_order):
         # VAR will not work properly on cointegrated data, therefore
         # we need to do a cointegration test and use a different model
         # if the data is cointegrated
-        is_c, lag_values = is_cointegrated(data)
+        is_c, lag_values, r = is_cointegrated(data)
         if is_c:
             print("The series is cointegrated. The VECM model will be used.")
-            return "VECM", None
+            return "VECM", lag_values, r
         else:
             print("The series is not cointegrated. The VAR model will be used.")
             print(f"The series was differenced {final_diff_order} times.")
-            return "VAR", lag_values
+            return "VAR", lag_values, r
     else:
         print("The series was already stationary. The VAR model will be used.")
-        return "VAR", None
+        return "VAR", None, None
 
 def prepare_data(data, model, final_diff_order, frac):
     # preprocessing the data - if it isn't stationary, but it also isn't cointegrated
@@ -107,13 +107,68 @@ def prepare_data(data, model, final_diff_order, frac):
         for _ in range(final_diff_order):
             new_data = new_data.diff()
 
-        training_data = new_data.sample(frac=frac, random_state=0)
-        test_data = new_data.drop(training_data.index)
+        split = int(len(new_data) * frac)
+        training_data = new_data.iloc[:split]
+        test_data = new_data.iloc[split:]
         return training_data.dropna(), test_data.dropna()
     else:
-        training_data = new_data.sample(frac=frac, random_state=0)
-        test_data = new_data.drop(training_data.index)
-        return training_data, test_data
+        split = int(len(new_data) * frac)
+        training_data = new_data.iloc[:split]
+        test_data = new_data.iloc[split:]
+
+        scaler = StandardScaler()
+        scaled_training_data = pd.DataFrame(
+            scaler.fit_transform(training_data),
+            columns=training_data.columns,
+            index=training_data.index
+        )
+
+        scaled_test_data = pd.DataFrame(
+            scaler.fit_transform(test_data),
+            columns=test_data.columns,
+            index=test_data.index
+        )
+
+        return scaled_training_data, scaled_test_data
+
+# iterates through all specified parameters and chooses the best model
+# super expensive in resources
+# todo check results on fast computer
+def find_best_parameters_for_VECM_bruteforce(data, max_r, max_lag, current_result):
+    best_aic = np.inf
+    best_r = 1
+    best_lag = 1
+    best_result = current_result
+
+    for r in range(1, max_r + 1):
+        for lag in range(1, max_lag + 1):
+
+            print(f"Testing r: {r}, lag: {lag}")
+
+            try:
+                model = VECM(data, k_ar_diff=lag, coint_rank=r)
+                result = model.fit()
+
+                if result.aic < best_aic:
+                    best_aic = result.aic
+                    best_lag = lag
+                    best_r = r
+                    best_result = result
+
+            except Exception:
+                continue
+
+    return best_r, best_lag, best_result
+
+def test_saved_model():
+    training_sensors = read_sensor_data('../../../model_translator/src/output/flight_0_best_sensors.csv')[:50847]
+    final_diff_order = check_final_diff_order(training_sensors)
+    model_type, lag_values, r = choose_model(training_sensors, final_diff_order)
+    training_data, test_data = prepare_data(training_sensors, model_type, final_diff_order, 0.9)
+    with open("model.pkl", "rb") as f:
+        result = pickle.load(f)
+
+    test_vecm(result, test_data, n=500)
 
 if __name__ == '__main__':
     # Reading the data from csv files
@@ -125,7 +180,7 @@ if __name__ == '__main__':
 
     print("start")
 
-    training_sensors = read_sensor_data('../../../model_translator/src/output/flight_0_best_sensors.csv')
+    training_sensors = read_sensor_data('../../../model_translator/src/output/flight_0_best_sensors.csv')[:50847]
 
     print("checking final difference")
 
@@ -136,12 +191,12 @@ if __name__ == '__main__':
     print("choosing model")
 
     # choosing the right model for the dataset (VAR or VECM)
-    model_type, lag_values = choose_model(training_sensors, final_diff_order)
+    model_type, lag_values, r = choose_model(training_sensors, final_diff_order)
 
     print("preparing data")
 
     # todo frac to config
-    training_data, test_data = prepare_data(training_sensors, model_type, final_diff_order, 0.8)
+    training_data, test_data = prepare_data(training_sensors, model_type, final_diff_order, 0.9)
 
     # TODO: calculate lag order here
 
@@ -154,8 +209,16 @@ if __name__ == '__main__':
         result = model.fit()
         print(test_var(model, test_data))
     else:
-        model = create_vecm(training_data)
+        #lag_order = lag_values.selected_orders["aic"]
+        #model = create_vecm(training_data, lag_order, r)
 
-        result = model.fit()
+        #result = model.fit()
 
-        print(test_vecm(model, test_data))
+        #r, lag, result = find_best_parameters_for_VECM_bruteforce(data=training_data, max_r=6, max_lag=6, current_result=result)
+
+        result = create_vecm(training_data, lag_values.aic, r)
+        result = train_vecm(result)
+        save_vecm(result, lag_values.aic, r)
+
+
+    test_vecm(result, test_data, n=500)
