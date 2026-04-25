@@ -1,5 +1,4 @@
-# todo cos tu nie gra
-
+# is data linear correlated
 
 import numpy as np
 import pandas as pd
@@ -7,13 +6,12 @@ from matplotlib import pyplot as plt
 from scipy import stats
 import seaborn as sns
 
-columns = [
-    'Best_Acc_X', 'Best_Acc_Y', 'Best_Acc_Z',
-    'Best_AngVel_X', 'Best_AngVel_Y', 'Best_AngVel_Z',
-    'Thrust', 'Barometer_Value', 'Sensor_Value'
-]
+columns = ['Best_Acc_X', 'Best_Acc_Y', 'Best_Acc_Z', 'Best_AngVel_X',
+       'Best_AngVel_Y', 'Best_AngVel_Z', 'Barometer_Value', 'Sensor_Value',
+       'Thrust', 'Mass', 'Position_X', 'Position_Y', 'Position_Z',
+       'Acceleration_X', 'Acceleration_Y', 'Acceleration_Z']
 
-N = 10
+N = 12
 matrix = np.zeros((N, N))
 
 for i in range(N):
@@ -27,14 +25,21 @@ for i in range(N):
         spearman_vals = []
 
         for col in columns:
-            r_p, _ = stats.pearsonr(df1[col], df2[col])
-            r_s, _ = stats.spearmanr(df1[col], df2[col])
+            min_len = min(len(df1), len(df2))
+
+            x = df1[col].values[:min_len]
+            y = df2[col].values[:min_len]
+
+            x = (x - x.mean()) / (x.std() + 1e-8)
+            y = (y - y.mean()) / (y.std() + 1e-8)
+
+            r_p, _ = stats.pearsonr(x, y)
+            r_s, _ = stats.spearmanr(x, y)
 
             pearson_vals.append(r_p)
             spearman_vals.append(r_s)
 
-        #matrix[i, j] = (np.mean(pearson_vals) + np.mean(spearman_vals)) / 2
-        matrix[i, j] = (np.mean(spearman_vals) + np.mean(spearman_vals)) / 2
+        matrix[i, j] = (np.mean(pearson_vals) + np.mean(spearman_vals)) / 2
 
 plt.figure(figsize=(8, 6))
 sns.heatmap(
@@ -46,5 +51,5 @@ sns.heatmap(
     yticklabels=[f"F{i}" for i in range(N)]
 )
 
-plt.title("Podobieństwo lotów (Pearson-Spearman p-value)")
+plt.title("Podobieństwo lotów (Pearson/Spearman correlation)")
 plt.show()
