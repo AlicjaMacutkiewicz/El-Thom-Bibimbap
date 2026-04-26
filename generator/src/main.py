@@ -268,7 +268,7 @@ def init_paths_from_json(main_paths_file):
     return dataset
 
     
-def parallel_generator(N, json_path, drag_path, env_base, heading , rail_length,sensor_list,thrust_path,stochastic_motor_params, acceleration_thresholds, angular_velocity_thresholds):
+def parallel_generator(N, json_path, drag_path, env_base, heading , rail_length,sensor_list,thrust_path,stochastic_motor_params, acceleration_thresholds, angular_velocity_thresholds,j):
     indices = range(N) 
     with open(json_path, 'r', encoding='utf-8') as file:
         model_data = json.load(file)
@@ -300,7 +300,7 @@ def parallel_generator(N, json_path, drag_path, env_base, heading , rail_length,
         environment = st_environment.create_object()
         rng = np.random.default_rng(i)
 
-        result =  run_single_simulation(i, rocket, environment, heading, rail_length, rng, acceleration_thresholds, angular_velocity_thresholds)
+        result =  run_single_simulation(i,j, rocket, environment, heading, rail_length, rng, acceleration_thresholds, angular_velocity_thresholds)
 
         #profiling
         # profiler.disable()
@@ -352,19 +352,27 @@ def main():
     angular_velocity_thresholds = config_data["thresholds"]["angular_velocity"]
     
     flight_simulation_amount_for_scenario = config_data["generator"]["flight_simulation_amount_for_scenario"]
-    date  = datetime.datetime(2005 , 12 , 10)
-    env_base = get_enviroment_from_date(environment_data, date, "ENV_DATA_"+date.strftime("%Y-%m-%d_%H:%M"))
-    parallel_generator(flight_simulation_amount_for_scenario,
-                       paths["source_model_path"]["parameters"],
-                       paths["source_model_path"]["drag_curve"],
-                       env_base,heading,
-                       rail_length,
-                       sensor_list,
-                       paths["source_model_path"]["thrust_source"],
-                       stochastic_motor_params,
-                       acceleration_thresholds,
-                       angular_velocity_thresholds
-                       )
+
+    dates = []
+    for i in range (10):
+        dates.append(datetime.datetime(2015-i , 12-i , 11-i))
+
+    j = 1
+    for date in dates:
+        env_base = get_enviroment_from_date(environment_data, date, "ENV_DATA_"+date.strftime("%Y-%m-%d_%H:%M"))
+        parallel_generator(flight_simulation_amount_for_scenario,
+                        paths["source_model_path"]["parameters"],
+                        paths["source_model_path"]["drag_curve"],
+                        env_base,heading,
+                        rail_length,
+                        sensor_list,
+                        paths["source_model_path"]["thrust_source"],
+                        stochastic_motor_params,
+                        acceleration_thresholds,
+                        angular_velocity_thresholds,
+                        j
+                        )
+        j+=1
     end_time = time.perf_counter()
     total_seconds = end_time - start_time
     formatted_time = str(datetime.timedelta(seconds=int(total_seconds)))

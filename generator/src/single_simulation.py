@@ -100,7 +100,7 @@ def apply_sensor_dropout(current_flight, frame, rng):
 
     return frame
 
-def run_single_simulation(i, rocket, environment, heading , rail_length, rng, acceleration_thresholds, angular_velocity_thresholds):
+def run_single_simulation(i,j, rocket, environment, heading , rail_length, rng, acceleration_thresholds, angular_velocity_thresholds):
     current_flight = Flight(
             heading=heading,
             environment=environment,
@@ -175,5 +175,5 @@ def run_single_simulation(i, rocket, environment, heading , rail_length, rng, ac
         final_df.bfill(inplace=True)
         # final_df.to_csv(os.path.join(dir, f"output/flight_{i}_test_sensors.csv"), index_label="Time")
         final_df['flight_id'] = i 
-        Log.print_info(f"Pakowanko... {i}")
-        final_df.to_parquet(f"output/flight_{i}.parquet", index=True)
+        Log.print_info(f"Pakowanko... {j}")
+        final_df.to_parquet(f"output/flight_{j}{i}.parquet", index=True)
