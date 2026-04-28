@@ -1,0 +1,27 @@
+(# - zrobione)
+
+Do zrobienia:
+--- ETAP 1 ---
+#(WIKTOR)    1. Dodać czujniki z JSON'ów
+                - thermometer.JSON (temperatura)
+                - gnss_velocity.JSON (GNSS, prędkość)
+                - barometer.JSON (ciśnienie)
+#(PAWEL)     2. Dodać model atmosfery (zmienne warunki dla każdego z lotów)
+#(WERONIKA)  3. Zmieniać parametry pracy silnika (zakłócenia, wady fabryczne - ok. 15% odchyłu brzmi sensownie)
+#(EMILIA)    4. Sprawdzić możliwości zmiany pozostałych warunków w trakcie lotów (i je zaimplementować)
+#(ALICJA)    5. Dodać funkcję odrzutu (usunięcia) losowo punktów na wyjściu
+#(WIKTOR)    6. Nadanie losowych błędów czujników (znaczące wyjścia z zakresów, skoki itp)
+#(WIKTOR)    7. Usprawnienie operacji odczytu/zapisu 
+#(WIKTOR)    8. Optymalizacja kodu, dodać zrównoleglenie tam gdzie jest możliwe
+#(WIKTOR)    9. Poprawa raportowania stanu przetwarzania (jakiś output ile już mamy przemielone a ile jeszcze nie)
+
+--- ETAP 2 ---
+(RAZEM AZ)  10. code review tego co już mamy
+(RAZEM AZ)  11. optymalizacja jeśli jest jeszcze co
+(M + WERKA) 12. zaraportowanie dokładnie co i dlaczego mamy zrobione
+(WERONIKA)  13. zamiana konkretnych danych pojazdu na R7
+(EMILIA)    14. kontrola czy scenariusze się nie duplikują za bardzo i dobór tak ich ilości żeby tego uniknąć
+(EMILIA)    15. zamiana formatu zapisu danych na parquet albo inny kolumnowy 
+(PAWEŁ)     16. logowanie do osobnego pliku
+(RAZEM AZ)  17. spuszczenie Grzecha z smyczy
+

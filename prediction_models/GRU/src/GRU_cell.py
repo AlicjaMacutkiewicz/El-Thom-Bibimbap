@@ -41,11 +41,9 @@ class Gru_Cell(tr.nn.Module):
         r = self.get_reset_gate(x, h_prev)
         return tr.tanh(((r * h_prev) @ self.U) + (x @ self.W) + self.b)
     
-    def get_new_h(self, x, h_prev):
+    def forward(self, x, h_prev):
         # h(t)  = (1-z(t))*h'(t) + h(t-1)*z(t)
         z = self.get_update_gate(x, h_prev)
         h_c = self.get_candidate_gate(x, h_prev)
         return (((1-z) * h_c) + (h_prev) * z)
-
-    def forward(self, x, h_prev):
-        return self.get_new_h(self, x, h_prev)
+    

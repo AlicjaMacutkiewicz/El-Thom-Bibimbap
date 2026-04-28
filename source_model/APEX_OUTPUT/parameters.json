@@ -1,0 +1,94 @@
+{
+    "elliptical_fins": {},
+    "environment": {
+        "base_pressure": null,
+        "base_temperature": null,
+        "date": null,
+        "elevation": 0.0,
+        "geodetic_method": "wgs84",
+        "latitude": 28.61,
+        "longitude": -80.6,
+        "wind_average": 5.0,
+        "wind_turbulence": 0.10000000000000002
+    },
+    "flight": {
+        "heading": 90.0,
+        "inclination": 90.0,
+        "rail_length": 1.0
+    },
+    "id": {
+        "comment": null,
+        "designer": "Kacper Śmieżewski",
+        "filepath": "rocket.ork",
+        "rocket_name": "apex02"
+    },
+    "motors": {
+        "center_of_dry_mass_position": 0,
+        "coordinate_system_orientation": "nozzle_to_combustion_chamber",
+        "dry_inertia": [
+            0,
+            0,
+            0
+        ],
+        "dry_mass": 0,
+        "grain_density": 1271.9083054300627,
+        "grain_initial_height": 0.314,
+        "grain_initial_inner_radius": 0.0135,
+        "grain_number": 1,
+        "grain_outer_radius": 0.027,
+        "grain_separation": 0,
+        "grains_center_of_mass_position": 0,
+        "nozzle_position": -0.157,
+        "nozzle_radius": 0.02025,
+        "position": 0.9939096209912536,
+        "throat_radius": 0.0135,
+        "thrust_source": "APEX_OUTPUT/thrust_source.csv"
+    },
+    "nosecones": {
+        "base_radius": 0.035,
+        "kind": "ogive",
+        "length": 0.4,
+        "name": "Nose Cone",
+        "position": 0.0
+    },
+    "parachutes": {
+        "0": {
+            "area": 4.908738521234052,
+            "cd": 1.0,
+            "cds": 4.908738521234052,
+            "deploy_altitude": null,
+            "deploy_delay": 2.0,
+            "deploy_event": "apogee",
+            "name": "Parachute"
+        }
+    },
+    "rail_buttons": {},
+    "rocket": {
+        "center_of_mass_without_propellant": 0.571,
+        "coordinate_system_orientation": "nose_to_tail",
+        "drag_curve": "APEX_OUTPUT/drag_curve.csv",
+        "inertia": [
+            0.003,
+            0.003,
+            0.388
+        ],
+        "mass": 4.07,
+        "radius": 0.035
+    },
+    "stored_results": {
+        "burnout_stability_margin": 4.635,
+        "flight_time": 450.916,
+        "ground_hit_velocity": 6.338,
+        "launch_rod_velocity": 13.291,
+        "max_acceleration": 109.861,
+        "max_altitude": 1847.2,
+        "max_mach": 0.693,
+        "max_stability_margin": 4.705,
+        "max_thrust": 553.889,
+        "max_velocity": 234.249,
+        "min_stability_margin": 0.0,
+        "time_to_apogee": 18.626
+    },
+    "tails": {},
+    "trapezoidal_fins": {}
+}

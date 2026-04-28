@@ -1,0 +1,4 @@
+training iterations:    10
+final loss:             train loss: 0.00885,
+                        test loss: 0.86509
+time spent:             ~3:12h

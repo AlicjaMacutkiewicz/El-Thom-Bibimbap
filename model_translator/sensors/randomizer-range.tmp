@@ -1,0 +1,51 @@
+Randomized parameters: 
+
+dictionary: 
+    dps - degrees per second
+    mdps -  milidegrees per second
+    LSB - Least Significant Bit
+    U - Continuous Uniform Distribution (Constant)
+    N - Continuous Normal Distribution (Gauss)
+    g - gravitational constant 
+    mg - mili (tousandth of) gravitational constant 
+
+
+input:
+    - adding quasi random changes
+    - adding quasi random holes in signal (deletion of points in some ranges)
+
+output:
+
+- angular velocity: 
+    (based on 3 sigma criterium, scaled down for lower measurement ranges)
+    ~ (  0 ,  245) [dps] -> U(-0.004375, 0.004375) + N(0,   1.49) [dps]
+    ~ (245 ,  500) [dps] -> U(-0.008750, 0.008750) + N(0,   6.25) [dps]
+    ~ (500 , 2000) [dps] -> U(-0.035000, 0.035000) + N(0, 100.00) [dps]
+
+- linear acceleration sensivity:
+    (based on 3 sigma criterium, scaled down for lower measurement ranges)
+    ~ (0 ,  2) [g] -> U(-0.0305, 0.0305) + N(0,   56.25) [mg]
+    ~ (2 ,  4) [g] -> U(-0.0610, 0.0610) + N(0,  225.00) [mg]
+    ~ (4 ,  8) [g] -> U(-0.1220, 0.1220) + N(0,  900.00) [mg]
+    ~ (8 , 16) [g] -> U(-0.2440, 0.2440) + N(0, 3600.00) [mg]
+
+- longitude and Latitude + altitude:
+    (based on rayleighs distribution and altitude precision (2d->1d) measurement differences)
+    > sampling rate GAL + GPS: 10Hz
+    > position accuracy : 1.274m (full range)
+    > altitude accuracy : 1.911m (full range)
+
+- velocity:
+    ~ (0, 500) [m/s] -> 0.05 m/s
+
+- heading:
+    (changed to radians)
+    ~ 0.005236 [rad] (full range)
+
+- temperature:
+    (changed to Kelvins)
+    ~ (233.15, 358.15) [K] 0.01 + 0.5
+
+- pressure:
+    (changed to Pascals)
+    ~ (30000.0, 110000.0) [Pa] 0.18 + 100 + 1.5

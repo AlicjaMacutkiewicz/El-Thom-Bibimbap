@@ -1,0 +1,14 @@
+{
+  "BMA150_barometer": {
+    "sampling_rate": 83.0,
+    "measurement_range": [110000.0, 30000.0],
+    "resolution": 0.18,
+    "noise_density": 0.0,
+    "noise_variance": 1.69,
+    "random_walk_density": 0.0,
+    "random_walk_variance": 0.0,
+    "constant_bias": 100.0,
+    "operating_temperature": 298.15,
+    "temperature_bias": 1.5
+  }
+}

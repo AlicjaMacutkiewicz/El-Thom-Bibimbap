@@ -1,0 +1,8 @@
+matplotlib
+pandas
+tqdm
+rocketpy
+pathos
+xarray
+scipy
+
