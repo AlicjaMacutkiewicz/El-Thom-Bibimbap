@@ -1,0 +1,10 @@
+Gregory - poprawki
+(# - zrobione)
+
+Do zrobienia:
+ 1. dodać logi, które daty zostały już wygenerowane
+ 2. dodać quasi losowy wybór dat co ok. 2 tygodnie
+ 3. podkręcić błędy czujników - zakres i częstotliwość
+ 4. sprawdzić lekko większe odchylenia w pracy silnika
+ 5. ustawić generator tak by stopniowo wykonywał generowanie danych rownolegle do treningu
+ 6. ponownie odpalić testy statystyczne
