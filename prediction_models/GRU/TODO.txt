@@ -1,9 +1,9 @@
 GRU TODO:
 - wykorzystać zaimplementowane gru zeby zobaczyc czy poprawnie dziala na przykładzie:
-    > zaimportować pare scenariuszy lotu
-    > wyciągnąć z tego dane o realnym przyspieszeniu w czasie (Acceleration_X/Y/Z)
-    > zaimplementować funkcję straty typu MSE
-    > nakarmić tym sieć
+    ☑ zaimportować pare scenariuszy lotu
+    ☑ wyciągnąć z tego dane o realnym przyspieszeniu w czasie (Acceleration_X/Y/Z)
+    ☑ zaimplementować funkcję straty typu MSE
+    ☑ nakarmić tym sieć
     > zobaczyć jak sobie radzi poprzez analizę funkcji straty po każdej iteracji (średnia wartość f. straty, jakiś wykresik)
     
 - zamienić żeby zamiast całego przyspieszenia na wyjściu dostawać tylko fragment odpowiadający za nieliniowe zmiany w torze
