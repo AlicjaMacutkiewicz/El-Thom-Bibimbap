@@ -1,3 +1,4 @@
+import json
 import math
 
 import numpy as np
@@ -5,9 +6,13 @@ from scipy import constants as const
 import isacalc as isa
 from matplotlib import pyplot as plt
 
-# ----------------------------- Stale -----------------------------
+# -------------------------- Ustawienia ---------------------------
 
 plot = False
+save = False
+
+# ----------------------------- Stale -----------------------------
+
 burn_time = 8  # s
 rocket_mass = 10  # kg
 fuel_mass = 6  # kg
@@ -63,6 +68,8 @@ dynamic_pressure_history = []
 free_flight_Y = 0
 apogeum = 0
 max_q = 0
+
+# ----------------------------------------------------------------------------------------------------------------
 
 def plot_history(position_z_history, dynamic_pressure_history, time_history, velocity_history, burn_time,
          acceleration_history, fuel_history, gravity_history, drag_history, air_density_history,
@@ -120,3 +127,27 @@ def plot_history(position_z_history, dynamic_pressure_history, time_history, vel
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
     plt.show()
+
+def initR7():
+    global burn_time
+    global rocket_mass
+    global fuel_mass
+    global fuel_consumption
+    global earth_mass
+    global earth_radius
+    global latitude
+    global longitude
+    global phi
+    global lam
+    global earth_angular_velocity
+    global area
+    global air_density_ground
+    global air_molar_mass
+    global molar_gas_const
+    global air_temperature
+    global pitch
+    global angle_rate
+    global thrust
+
+    with open('example.json') as f:
+        data = json.load(f)

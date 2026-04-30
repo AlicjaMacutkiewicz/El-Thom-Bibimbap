@@ -8,31 +8,6 @@ from SimHelper import *
 
 # ---------------------------- Symulacja ----------------------------
 
-def DragCoefficient(M):
-    # todo doczytac wiecej
-    # todo predkosci supersoniczne
-    if M < 0.8:
-        return 0.5
-    elif M < 1.2:
-        return 0.5 + (M - 0.8) / 0.4 * 0.7
-    elif M < 2.0:
-        return 1.2 - (M - 1.2) / 0.8 * 0.6
-    else:
-        return 0.6
-
-def CalculateDrag(atm_params, velocity, position):
-    v_air = velocity - np.cross(earth_angular_velocity_vector, position)
-    v_mag = np.linalg.norm(v_air)
-
-    air_density_isa = atm_params[3]
-    speed_of_sound = atm_params[4]
-    Mach = v_mag / max(speed_of_sound, 1e-8)
-
-    drag_coefficient = DragCoefficient(Mach)
-    drag_vector = -0.5 * air_density_isa * drag_coefficient * area * v_mag * v_air
-
-    return drag_vector
-
 def CalculateThrust(position):
     # todo ciag zmienia sie wraz z cisnieniem
     up = position / max(np.linalg.norm(position), 1e-8)
@@ -61,12 +36,6 @@ def CalculateNonInertialForces(velocity, position):
 def RK4(dt, fuel_mass, flight_time):
     def acceleration(position, velocity, fuelMass, flightTime):
         height = max(0, np.linalg.norm(position) - earth_radius)
-
-        if height > 100000:
-            drag = np.zeros(3)
-        else:
-            params = atm.calculate(h=height)
-            drag = CalculateDrag(params, velocity, position)
 
         if flightTime < burn_time and fuelMass > 0:
             thrust_vector = CalculateThrust(position)
@@ -142,7 +111,8 @@ while True:
 
 #--------------------------- Zapisywanie --------------------------
 
-pd.DataFrame({
+if not save:
+    pd.DataFrame({
     'x': position_x_history,
     'y': position_y_history,
     'z': position_z_history
