@@ -428,7 +428,7 @@ def main():
     
     yearly_files = {}
     for year in range(year_start, year_end + 1):
-        sl_file, pl_file = download_yearly_weather(year)
+        sl_file, pl_file = download_yearly_weather(year, environment_data["longitude"], environment_data["latitude"])
         yearly_files[year] = {"single": sl_file, "levels": pl_file}
     amount_in_parrallel = 12
 

@@ -1,7 +1,7 @@
 {
     "environment": {
-        "latitude": 54.372158,
-        "longitude": 18.638306,
+        "latitude": 35.350909266656124, 
+        "longitude": -117.80854324924205,
         "path": "data_stream-oper_stepType-instant.nc",
         "date": "19.03.2026",
         "elevation": 10

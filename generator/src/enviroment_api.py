@@ -1,3 +1,4 @@
+import json
 import cdsapi
 import xarray as xr
 import numpy as np
@@ -11,7 +12,7 @@ from logger import *
 # date must be datetime type
 # PROVIDED PATH SHOULD NOT CONTAINT FILE NAME ONLY DIRECTORY
 # This method is not thred save, u need to ensure that no other thred is using same file name 
-def get_enviroment_from_date(environment_data, date,filename, path="../../source_model/ERA5_weather/"):
+def get_enviroment_from_date(environment_data, date,  longitude, latitude, filename, path="../../source_model/ERA5_weather/"):
     os.makedirs(os.path.join(path, "single"), exist_ok=True)
     os.makedirs(os.path.join(path, "levels"), exist_ok=True)
 
@@ -24,6 +25,11 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
         os.remove(target_single)
     if(os.path.exists(target_levels)):
         os.remove(target_levels)
+
+    longitude_max = longitude + 0.12
+    longitude_min = longitude - 0.13
+    latitude_max =  latitude + 0.12
+    latitude_min =  latitude - 0.13
 
     dataset = "reanalysis-era5-single-levels"
     request = {
@@ -42,7 +48,7 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
         "time": [date.strftime("%H:%M")],
         "data_format": "netcdf4",
         "download_format": "unarchived",
-        "area": [54.37, 18.38, 54.12, 18.63]
+        "area": get_enviroment_from_date
         }
 
     client = cdsapi.Client(quiet=True)
@@ -79,7 +85,7 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
         ],
         "data_format": "netcdf4",
         "download_format": "unarchived",
-        "area": [54.37, 18.38, 54.12, 18.63]
+        "area": [latitude_max, longitude_min, latitude_min, longitude_max ]
     }
 
     client = cdsapi.Client(quiet=True)
@@ -130,8 +136,7 @@ def get_enviroment_from_date(environment_data, date,filename, path="../../source
     # env = stoch_env.create_object()
     return env
 
-
-def download_yearly_weather(year, path="../../source_model/ERA5_weather/"):
+def download_yearly_weather(year, longitude, latitude, path="../../source_model/ERA5_weather/"):
     """
     Downloads an entire year of data (at 12:00) in just TWO API requests.
     Saves them locally so workers don't need internet access.
@@ -148,7 +153,10 @@ def download_yearly_weather(year, path="../../source_model/ERA5_weather/"):
     days = [f"{i:02d}" for i in range(1, 32)]
     
     client = cdsapi.Client(quiet=True)
-
+    longitude_max = longitude + 0.12
+    longitude_min = longitude - 0.13
+    latitude_max =  latitude + 0.12
+    latitude_min =  latitude - 0.13
     if not os.path.exists(target_single):
         Log.print_info(f"Queueing API request for {year} SINGLE levels (This will take a minute or two...)")
         dataset_sl = "reanalysis-era5-single-levels"
@@ -161,7 +169,7 @@ def download_yearly_weather(year, path="../../source_model/ERA5_weather/"):
             "time": ["12:00"],
             "data_format": "netcdf4",
             "download_format": "unarchived",
-            "area": [54.37, 18.38, 54.12, 18.63]
+            "area": [latitude_max, longitude_min, latitude_min, longitude_max ]
         }
         client.retrieve(dataset_sl, request_sl, target_single)
 
@@ -183,7 +191,8 @@ def download_yearly_weather(year, path="../../source_model/ERA5_weather/"):
             ],
             "data_format": "netcdf4",
             "download_format": "unarchived",
-            "area": [54.37, 18.38, 54.12, 18.63]
+            "area": [latitude_max, longitude_min, latitude_min, longitude_max ]
+
         }
         client.retrieve(dataset_pl, request_pl, target_levels)
 
