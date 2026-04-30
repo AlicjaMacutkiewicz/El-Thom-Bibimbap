@@ -1,7 +1,3 @@
-import pandas as pd
-from SimHelper import *
-import pandas as pd
-
 from SimHelper import *
 
 # ---------------------------- Symulacja ----------------------------
@@ -32,14 +28,6 @@ def CalculateNonInertialForces(velocity, position):
     return coriolis, centrifugal
 
 def Newton(dt, fuel_mass, flight_time):
-    height = max(0, np.linalg.norm(position_global) - earth_radius)
-
-    if height > 100000:
-        new_drag = np.zeros(3)
-    else:
-        params = atm.calculate(h=height)
-        new_drag = CalculateDrag(params, velocity_global, position_global)
-
     fuelMass = max(fuel_mass - fuel_consumption * dt, 0)
 
     if flight_time < burn_time and fuelMass > 0:
@@ -51,12 +39,12 @@ def Newton(dt, fuel_mass, flight_time):
     coriolis, centrifugal = CalculateNonInertialForces(velocity_global, position_global)
 
     mass = rocket_mass + fuelMass
-    new_acceleration = (thrust_vector + new_drag) / max(mass, 1e-8) + new_gravity + coriolis + centrifugal
+    new_acceleration = (thrust_vector) / max(mass, 1e-8) + new_gravity + coriolis + centrifugal
 
     new_velocity = velocity_global + new_acceleration * dt
     new_position = position_global + new_velocity * dt
 
-    return new_position, new_velocity, new_acceleration, new_gravity, new_drag
+    return new_position, new_velocity, new_acceleration, new_gravity
 
 while True:
     height = np.linalg.norm(position_global) - earth_radius
@@ -73,36 +61,8 @@ while True:
         free_flight_Y = position_global[2]
         angle_rate = 0
 
-    position_global, velocity_global, acceleration_local, gravity_local, drag_local = Newton(dt, fuel_mass, flight_time)
+    position_global, velocity_global, acceleration_local, gravity_local = Newton(dt, fuel_mass, flight_time)
 
     dynamic_pressure = atm.calculate(h=height)[2] * np.linalg.norm(velocity_global) ** 2 / 2
 
     flight_time += dt
-
-    # ----------- Historia ------------
-
-    time_history.append(flight_time)
-
-    position_x_history.append(position_global[0] - start_position[0])
-    position_y_history.append(position_global[1] - start_position[1])
-    position_z_history.append(position_global[2] - start_position[2])
-
-    velocity_history.append(np.linalg.norm(velocity_global))
-    acceleration_history.append(np.linalg.norm(acceleration_local))
-    fuel_history.append(fuel_mass)
-    gravity_history.append(np.linalg.norm(gravity_local))
-    drag_history.append(np.linalg.norm(drag_local))
-    air_density_history.append(atm.calculate(h=height)[3])
-    dynamic_pressure_history.append(dynamic_pressure)
-
-#--------------------------- Zapisywanie --------------------------
-
-if not save:
-    pd.DataFrame({
-    'x': position_x_history,
-    'y': position_y_history,
-    'z': position_z_history
-}).to_csv("newton_position.csv", index=False)
-
-if not plot:
-    plot_history(position_z_history, dynamic_pressure_history, time_history, velocity_history, burn_time, acceleration_history, fuel_history, gravity_history, drag_history, air_density_history, position_x_history, position_y_history)

@@ -35,8 +35,6 @@ def CalculateNonInertialForces(velocity, position):
 
 def RK4(dt, fuel_mass, flight_time):
     def acceleration(position, velocity, fuelMass, flightTime):
-        height = max(0, np.linalg.norm(position) - earth_radius)
-
         if flightTime < burn_time and fuelMass > 0:
             thrust_vector = CalculateThrust(position)
         else:
@@ -46,21 +44,21 @@ def RK4(dt, fuel_mass, flight_time):
         coriolis, centrifugal = CalculateNonInertialForces(velocity, position)
 
         mass = rocket_mass + fuelMass
-        return (thrust_vector + drag) / max(mass, 1e-8) + gravity + coriolis + centrifugal, gravity, drag
+        return (thrust_vector) / max(mass, 1e-8) + gravity + coriolis + centrifugal, gravity
 
-    k1_acceleration, k1_gravity, k1_drag = acceleration(position_global, velocity_global, max(fuel_mass - fuel_consumption * dt / 4, 0), flight_time)
+    k1_acceleration, k1_gravity = acceleration(position_global, velocity_global, max(fuel_mass - fuel_consumption * dt / 4, 0), flight_time)
     k1_velocity = k1_acceleration * dt
     k1_position = velocity_global * dt
 
-    k2_acceleration, k2_gravity, k2_drag = acceleration(position_global + 0.5 * k1_position, velocity_global + 0.5 * k1_velocity, max(fuel_mass - fuel_consumption * dt / 2, 0), flight_time + 0.5 * dt)
+    k2_acceleration, k2_gravity = acceleration(position_global + 0.5 * k1_position, velocity_global + 0.5 * k1_velocity, max(fuel_mass - fuel_consumption * dt / 2, 0), flight_time + 0.5 * dt)
     k2_velocity = k2_acceleration * dt
     k2_position = (velocity_global + 0.5 * k1_velocity) * dt
 
-    k3_acceleration, k3_gravity, k3_drag = acceleration(position_global + 0.5 * k2_position, velocity_global + 0.5 * k2_velocity, max(fuel_mass - fuel_consumption * dt * 3 / 4, 0), flight_time + 0.5 * dt)
+    k3_acceleration, k3_gravity = acceleration(position_global + 0.5 * k2_position, velocity_global + 0.5 * k2_velocity, max(fuel_mass - fuel_consumption * dt * 3 / 4, 0), flight_time + 0.5 * dt)
     k3_velocity = k3_acceleration * dt
     k3_position = (velocity_global + 0.5 * k2_velocity) * dt
 
-    k4_acceleration, k4_gravity, k4_drag = acceleration(position_global + k3_position, velocity_global + k3_velocity, max(fuel_mass - fuel_consumption * dt, 0), flight_time + dt)
+    k4_acceleration, k4_gravity = acceleration(position_global + k3_position, velocity_global + k3_velocity, max(fuel_mass - fuel_consumption * dt, 0), flight_time + dt)
     k4_velocity = k4_acceleration * dt
     k4_position = (velocity_global + k3_velocity) * dt
 
@@ -68,9 +66,8 @@ def RK4(dt, fuel_mass, flight_time):
     new_velocity = velocity_global + (k1_velocity + 2 * k2_velocity + 2 * k3_velocity + k4_velocity) / 6
     new_position = position_global + (k1_position + 2 * k2_position + 2 * k3_position + k4_position) / 6
     new_gravity = (k1_gravity + 2 * k2_gravity + 2 * k3_gravity + k4_gravity) / 6
-    new_drag = (k1_drag + 2 * k2_drag + 2 * k3_drag + k4_drag) / 6
 
-    return new_position, new_velocity, new_acceleration, new_gravity, new_drag
+    return new_position, new_velocity, new_acceleration, new_gravity
 
 while True:
     height = np.linalg.norm(position_global) - earth_radius
@@ -87,36 +84,8 @@ while True:
         free_flight_Y = position_global[2]
         angle_rate = 0
 
-    position_global, velocity_global, acceleration_local, gravity_local, drag_local = RK4(dt, fuel_mass, flight_time)
+    position_global, velocity_global, acceleration_local, gravity_local = RK4(dt, fuel_mass, flight_time)
 
     dynamic_pressure = atm.calculate(h=height)[2] * np.linalg.norm(velocity_global) ** 2 / 2
 
     flight_time += dt
-
-    # ----------- Historia ------------
-
-    time_history.append(flight_time)
-
-    position_x_history.append(position_global[0] - start_position[0])
-    position_y_history.append(position_global[1] - start_position[1])
-    position_z_history.append(position_global[2] - start_position[2])
-
-    velocity_history.append(np.linalg.norm(velocity_global))
-    acceleration_history.append(np.linalg.norm(acceleration_local))
-    fuel_history.append(fuel_mass)
-    gravity_history.append(np.linalg.norm(gravity_local))
-    drag_history.append(np.linalg.norm(drag_local))
-    air_density_history.append(atm.calculate(h=height)[3])
-    dynamic_pressure_history.append(dynamic_pressure)
-
-#--------------------------- Zapisywanie --------------------------
-
-if not save:
-    pd.DataFrame({
-    'x': position_x_history,
-    'y': position_y_history,
-    'z': position_z_history
-}).to_csv("rk4_position.csv", index=False)
-
-if not plot:
-    plot_history(position_z_history, dynamic_pressure_history, time_history, velocity_history, burn_time, acceleration_history, fuel_history, gravity_history, drag_history, air_density_history, position_x_history, position_y_history)
