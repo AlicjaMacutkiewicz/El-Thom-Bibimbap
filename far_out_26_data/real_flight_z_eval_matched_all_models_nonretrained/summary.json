@@ -1,0 +1,204 @@
+{
+  "flight": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/far_out_26_data/converted/flight_far_out_26.parquet",
+  "models": [
+    {
+      "name": "Plain GRU",
+      "path": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/final_model/gru_model.pth",
+      "output_mode": "direct"
+    },
+    {
+      "name": "GRU-RK4",
+      "path": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/final_model/gru_res_model.pth",
+      "output_mode": "residual"
+    },
+    {
+      "name": "GRU-RK4 + physics",
+      "path": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/final_model/gru_res_phys_model.pth",
+      "output_mode": "residual"
+    }
+  ],
+  "parameters": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/source_model/R7_SIMLE/R7_OUTPUT/parameters.json",
+  "thrust_curve": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/source_model/R7_SIMLE/R7_FAROUT_26/thrust_source_pressure85.csv",
+  "scaler_npz": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/gru_ablation_eval/reconstructed_scalers.npz",
+  "output_dir": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/far_out_26_data/real_flight_z_eval_matched_all_models_nonretrained",
+  "axis_maps": {
+    "acc": "X,Z,-Y",
+    "gyro": "X,Z,-Y"
+  },
+  "rows_after_downsample": 1686,
+  "time_start_s": -0.7549999952316284,
+  "time_end_s": 66.6449966430664,
+  "dt_median_s": 0.04000091552734375,
+  "effective_sampling_rate_hz": 24.999427795410156,
+  "downsample": 4,
+  "seq_len": 100,
+  "pred_len": 100,
+  "horizon_seconds_median": 3.9599990844726562,
+  "horizon_seconds_min": 3.9599952697753906,
+  "horizon_seconds_max": 3.960002899169922,
+  "windows_evaluated": 1486,
+  "position_threshold_m": 10.0,
+  "acc_threshold": 5.0,
+  "position_z_metrics": {
+    "Plain GRU": {
+      "point_rmse": 29.227136674152376,
+      "point_mae": 16.91396534320323,
+      "mean_window_rmse": 21.834733963012695,
+      "median_window_rmse": 16.386417388916016,
+      "p95_window_rmse": 57.71718978881836,
+      "p99_window_rmse": 101.40619659423828,
+      "max_window_rmse": 124.61495971679688,
+      "failures_over_threshold": 990,
+      "windows": 1486,
+      "failure_rate_pct": 66.62180349932706
+    },
+    "GRU-RK4": {
+      "point_rmse": 43.12078875219047,
+      "point_mae": 30.32049798115747,
+      "mean_window_rmse": 40.33955764770508,
+      "median_window_rmse": 41.30201721191406,
+      "p95_window_rmse": 63.157997131347656,
+      "p99_window_rmse": 86.3698501586914,
+      "max_window_rmse": 101.25049591064453,
+      "failures_over_threshold": 1430,
+      "windows": 1486,
+      "failure_rate_pct": 96.23149394347242
+    },
+    "GRU-RK4 + physics": {
+      "point_rmse": 26.823841868710332,
+      "point_mae": 14.846113728129206,
+      "mean_window_rmse": 19.942182540893555,
+      "median_window_rmse": 11.939640045166016,
+      "p95_window_rmse": 53.618770599365234,
+      "p99_window_rmse": 72.64336395263672,
+      "max_window_rmse": 94.82012939453125,
+      "failures_over_threshold": 832,
+      "windows": 1486,
+      "failure_rate_pct": 55.98923283983849
+    },
+    "Polynomial": {
+      "point_rmse": 35.00705254843952,
+      "point_mae": 14.45792732166891,
+      "mean_window_rmse": 17.501617431640625,
+      "median_window_rmse": 8.204191207885742,
+      "p95_window_rmse": 78.74028015136719,
+      "p99_window_rmse": 169.1368865966797,
+      "max_window_rmse": 237.61410522460938,
+      "failures_over_threshold": 628,
+      "windows": 1486,
+      "failure_rate_pct": 42.261103633916555
+    },
+    "RK4 only": {
+      "point_rmse": 34.04210519306604,
+      "point_mae": 22.87306527590848,
+      "mean_window_rmse": 30.573883056640625,
+      "median_window_rmse": 33.846370697021484,
+      "p95_window_rmse": 48.27500915527344,
+      "p99_window_rmse": 71.73867797851562,
+      "max_window_rmse": 86.34630584716797,
+      "failures_over_threshold": 1234,
+      "windows": 1486,
+      "failure_rate_pct": 83.04172274562585
+    },
+    "Last acceleration": {
+      "point_rmse": 11.160387070765672,
+      "point_mae": 5.6973111541049795,
+      "mean_window_rmse": 7.088122844696045,
+      "median_window_rmse": 4.556275367736816,
+      "p95_window_rmse": 27.105409622192383,
+      "p99_window_rmse": 47.24587631225586,
+      "max_window_rmse": 55.00484848022461,
+      "failures_over_threshold": 246,
+      "windows": 1486,
+      "failure_rate_pct": 16.55450874831763
+    },
+    "Oracle acceleration": {
+      "point_rmse": 11.483509740593899,
+      "point_mae": 5.80645651076716,
+      "mean_window_rmse": 7.305447101593018,
+      "median_window_rmse": 4.591299057006836,
+      "p95_window_rmse": 28.382274627685547,
+      "p99_window_rmse": 47.24587631225586,
+      "max_window_rmse": 55.00484848022461,
+      "failures_over_threshold": 260,
+      "windows": 1486,
+      "failure_rate_pct": 17.49663526244953
+    }
+  },
+  "acceleration_z_metrics": {
+    "Plain GRU": {
+      "point_rmse": 8.582344784027535,
+      "point_mae": 6.188890477792732,
+      "mean_window_rmse": 7.173614025115967,
+      "median_window_rmse": 6.571656227111816,
+      "p95_window_rmse": 15.653101921081543,
+      "p99_window_rmse": 23.595170974731445,
+      "max_window_rmse": 26.685583114624023,
+      "failures_over_threshold": 888,
+      "windows": 1486,
+      "failure_rate_pct": 59.757738896366085
+    },
+    "GRU-RK4": {
+      "point_rmse": 11.098637652383124,
+      "point_mae": 9.831533479138628,
+      "mean_window_rmse": 10.427056312561035,
+      "median_window_rmse": 11.439122200012207,
+      "p95_window_rmse": 14.777621269226074,
+      "p99_window_rmse": 15.38835620880127,
+      "max_window_rmse": 15.923247337341309,
+      "failures_over_threshold": 1325,
+      "windows": 1486,
+      "failure_rate_pct": 89.16554508748318
+    },
+    "GRU-RK4 + physics": {
+      "point_rmse": 7.054407383065211,
+      "point_mae": 5.124107923956931,
+      "mean_window_rmse": 5.602977275848389,
+      "median_window_rmse": 4.115289211273193,
+      "p95_window_rmse": 13.16537857055664,
+      "p99_window_rmse": 14.973495483398438,
+      "max_window_rmse": 15.836109161376953,
+      "failures_over_threshold": 612,
+      "windows": 1486,
+      "failure_rate_pct": 41.184387617765815
+    },
+    "RK4 only": {
+      "point_rmse": 9.092265211466243,
+      "point_mae": 8.45324865410498,
+      "mean_window_rmse": 8.567956924438477,
+      "median_window_rmse": 9.824493408203125,
+      "p95_window_rmse": 9.852453231811523,
+      "p99_window_rmse": 9.855999946594238,
+      "max_window_rmse": 9.856913566589355,
+      "failures_over_threshold": 1295,
+      "windows": 1486,
+      "failure_rate_pct": 87.14670255720054
+    },
+    "Last acceleration": {
+      "point_rmse": 1.9613239718989888,
+      "point_mae": 0.46590054046096907,
+      "mean_window_rmse": 0.5839253664016724,
+      "median_window_rmse": 0.0,
+      "p95_window_rmse": 5.733648777008057,
+      "p99_window_rmse": 9.173142433166504,
+      "max_window_rmse": 9.911925315856934,
+      "failures_over_threshold": 86,
+      "windows": 1486,
+      "failure_rate_pct": 5.787348586810229
+    }
+  },
+  "runtime_seconds": 1.1262180805206299,
+  "validation_scope": {
+    "validated": [
+      "real telemetry ingestion",
+      "Z acceleration replay against telemetry-derived filtered acceleration",
+      "integrated Z position replay against telemetry-derived altitude/height"
+    ],
+    "not_validated": [
+      "exact X/Y position accuracy",
+      "exact full 3D trajectory accuracy",
+      "landing spot prediction",
+      "live operational dropout handling"
+    ]
+  }
+}

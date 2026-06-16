@@ -10,6 +10,6 @@
         "parameters": "../../source_model/R7_SIMLE/R7_OUTPUT/parameters.json",
         "drag_curve": "../../source_model/R7_SIMLE/R7_OUTPUT/drag_curve.csv",
         "thrust_source_60": "../../source_model/R7_SIMLE/R7_OUTPUT/thrust_source.csv",
-        "thrust_source_100": "../../source_model/R7_SIMLE/R7_FAROUT_26/thrust_source.csv"
+        "thrust_source_100": "../../source_model/R7_SIMLE/R7_OUTPUT/thrust_source.csv"
     }
 }   

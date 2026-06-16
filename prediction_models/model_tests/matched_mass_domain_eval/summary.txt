@@ -1,0 +1,32 @@
+EXHAUSTIVE EXTERNAL TEST SUMMARY - XYZ POSITION AND ACCELERATION
+Models:
+  Plain GRU: /Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/final_model/gru_model.pth (direct)
+  GRU-RK4: /Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/final_model/gru_res_model.pth (residual)
+  GRU-RK4 + physics: /Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/final_model/gru_res_phys_model.pth (residual)
+Primary neural method for examples: GRU-RK4 + physics
+External files evaluated: 48 (skipped: 0)
+Windows evaluated: 79,992
+Runtime: 0.67 minutes
+Failure threshold: >10.0 m window RMSE
+
+100-STEP POSITION FORECAST METRICS - 3D TRAJECTORY DISTANCE
+Plain GRU            point_RMSE=8.582 m  mean_window=4.461 m  p99=37.054 m  >threshold=14,559/79,992 (18.2006%)
+GRU-RK4              point_RMSE=8.935 m  mean_window=4.896 m  p99=36.484 m  >threshold=12,581/79,992 (15.7278%)
+GRU-RK4 + physics    point_RMSE=6.681 m  mean_window=3.577 m  p99=27.168 m  >threshold=7,731/79,992 (9.6647%)
+Polynomial           point_RMSE=31.667 m  mean_window=11.286 m  p99=190.048 m  >threshold=19,879/79,992 (24.8512%)
+RK4 only             point_RMSE=38.711 m  mean_window=35.925 m  p99=66.549 m  >threshold=68,986/79,992 (86.2411%)
+Last acceleration    point_RMSE=9.260 m  mean_window=2.885 m  p99=33.116 m  >threshold=6,948/79,992 (8.6859%)
+Oracle acceleration  point_RMSE=0.558 m  mean_window=0.266 m  p99=2.215 m  >threshold=0/79,992 (0.0000%)
+
+GRU-RK4 + physics POSITION BY AXIS
+X   point_RMSE=4.222 m  p99_window=21.108 m  >threshold=3,341/79,992 (4.1767%)
+Y   point_RMSE=2.004 m  p99_window=9.186 m  >threshold=627/79,992 (0.7838%)
+Z   point_RMSE=4.775 m  p99_window=20.114 m  >threshold=5,476/79,992 (6.8457%)
+3D  point_RMSE=6.681 m  p99_window=27.168 m  >threshold=7,731/79,992 (9.6647%)
+
+ACCELERATION METRICS BY AXIS
+Plain GRU            X_RMSE=1.4923  Y_RMSE=0.8517  Z_RMSE=2.7343  vector_RMSE=3.2294
+GRU-RK4              X_RMSE=1.4556  Y_RMSE=0.5659  Z_RMSE=2.6051  vector_RMSE=3.0373
+GRU-RK4 + physics    X_RMSE=1.3292  Y_RMSE=0.6053  Z_RMSE=2.1223  vector_RMSE=2.5763
+RK4 only             X_RMSE=1.2830  Y_RMSE=0.5619  Z_RMSE=9.4496  vector_RMSE=9.5529
+Last acceleration    X_RMSE=1.3197  Y_RMSE=0.5711  Z_RMSE=3.0683  vector_RMSE=3.3886

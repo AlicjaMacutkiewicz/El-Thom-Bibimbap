@@ -420,16 +420,8 @@ def parallel_generator(
             
             rng = np.random.default_rng(i)
 
-            #As i said wczesniej to bedzie zmienione soon
-            if rng.random() < prob_full_fuel:
-                thrust_path = thrust_path_100
-                fuel_fraction = 1.0
-            else: 
-                thrust_path = thrust_path_60
-                fuel_fraction = 0.6
-
-
-            # fuel_fraction = rng.uniform(fuel_min , fuel_max)
+            fuel_fraction = rng.uniform(fuel_min, fuel_max)
+            thrust_path = thrust_path_100 if fuel_fraction >= 0.999 else thrust_path_60
             
             #dla osob zastanawiajacych sie czemu kopia
             #każdy proces musi mieć osobny plik json ponieważ go modyfikujemy
@@ -495,6 +487,9 @@ def main():
 
     fuel_min = 1.0
     fuel_max = 1.0
+    fuel_explicit = False
+    paths_file = "paths.json"
+    generation_mode = "nominal"
 
     args = sys.argv[1:]
 
@@ -503,11 +498,23 @@ def main():
         Log.print_warning("running in test mode")
         args.remove("test")
 
+    if "--competition-day" in args:
+        generation_mode = "far_out_26_competition_day"
+        paths_file = "paths_farout_26.json"
+        args.remove("--competition-day")
+
+    if "--paths" in args:
+        idx = args.index("--paths")
+        paths_file = args[idx + 1]
+        args.pop(idx + 1)
+        args.remove("--paths")
+
     # Fuel option examples :
     # --fuel 60-70 (generates flights with randomly selected fuel percentage in this case beatwean 60% and 70%)
     # --fuel 67 (generates flights with strict 60% fuel val)
 
     if "--fuel" in args:
+        fuel_explicit = True
         idx = args.index("--fuel")
         fuel_val = args[idx + 1]
         if "-" in fuel_val:
@@ -515,10 +522,22 @@ def main():
             fuel_min , fuel_max = float(f_min) / 100.0, float(f_max) / 100.0
         else:
             fuel_min = float(fuel_val)
+            if fuel_min > 1.0:
+                fuel_min /= 100.0
             fuel_max = fuel_min
         args.pop(idx+1)
         args.remove("--fuel")
         Log.print_info(f"fuel level is set to: {fuel_min*100}% - {fuel_max*100}%")
+
+    if generation_mode == "far_out_26_competition_day" and not fuel_explicit:
+        # Proxy for the measured FAR-OUT 26 oxidizer load: 5.5 kg against the
+        # nominal 12 kg propellant-equivalent scale used by this generator.
+        fuel_min = fuel_max = 5.5 / 12.0
+        Log.print_info(
+            "competition-day mode: fuel/oxidizer proxy defaults to "
+            f"{fuel_min * 100:.3f}%"
+        )
+
     try:
         if len(args) >= 2:
             year_start = int(args[0])
@@ -532,8 +551,10 @@ def main():
         print("no year arguments")
 
     print(f"generating simulations from {year_start} to {year_end}...")
+    Log.print_info(f"generation mode: {generation_mode}")
+    Log.print_info(f"paths file: {paths_file}")
 
-    paths = init_paths_from_json("paths.json")
+    paths = init_paths_from_json(paths_file)
     environment_data = get_environment_data_from_JSON(paths["config_path"])
 
     sensor_list = []

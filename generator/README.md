@@ -53,3 +53,19 @@ The current configuration explicitly models the noise, variance, and bias profil
 **Standard execution:**
 ```bash
 python main.py
+```
+
+**FAR-OUT 2026 competition-day configuration:**
+```bash
+python main.py --competition-day 2020 2021
+```
+
+The default `paths.json` file points to the nominal R7 configuration in
+`source_model/R7_SIMLE/R7_OUTPUT`. The `--competition-day` flag switches the
+generator to `paths_farout_26.json`, which points to the FAR-OUT 2026
+configuration in `source_model/R7_SIMLE/R7_FAROUT_26`. This keeps the nominal
+configuration and the launch-day approximation separate and traceable.
+
+Unless `--fuel` is provided explicitly, competition-day mode uses the current
+FAR-OUT oxidizer-load proxy derived from 5.5 kg against the nominal 12 kg
+generator scale.

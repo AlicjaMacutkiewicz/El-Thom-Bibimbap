@@ -1,0 +1,5 @@
+target_rmse_m,file,start_sample_after_downsample,actual_gru_rmse_m
+0.25,flight_2021-07-12.parquet,810,0.25007370114326477
+0.5,flight_2021-12-11.parquet,677,0.500002920627594
+1.0,flight_2020-07-30.parquet,1119,0.9999936819076538
+10.0,flight_2020-03-14.parquet,433,9.998356819152832
