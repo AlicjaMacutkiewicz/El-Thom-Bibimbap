@@ -105,6 +105,24 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Results output directory. Defaults to ~/gru_ablation_eval_TIMESTAMP.",
     )
+    parser.add_argument(
+        "--parameters",
+        type=Path,
+        default=None,
+        help=(
+            "Rocket parameters JSON for the RK4 baseline. Defaults to "
+            "source_model/R7_SIMLE/R7_OUTPUT/parameters.json."
+        ),
+    )
+    parser.add_argument(
+        "--thrust-curve",
+        type=Path,
+        default=None,
+        help=(
+            "Thrust curve CSV for the RK4 baseline. Defaults to "
+            "source_model/R7_SIMLE/R7_OUTPUT/thrust_source.csv."
+        ),
+    )
     parser.add_argument("--training-num-flights", type=int, default=1652)
     parser.add_argument("--training-start-flight", type=int, default=0)
     parser.add_argument("--split-seed", type=int, default=41)
@@ -166,6 +184,10 @@ def resolve_paths(args: argparse.Namespace) -> None:
     args.repo = args.repo.expanduser().resolve()
     args.scaler_data_dir = args.scaler_data_dir.expanduser().resolve()
     args.eval_data_dir = args.eval_data_dir.expanduser().resolve()
+    if args.parameters is not None:
+        args.parameters = args.parameters.expanduser().resolve()
+    if args.thrust_curve is not None:
+        args.thrust_curve = args.thrust_curve.expanduser().resolve()
     model_root = args.repo / "prediction_models" / "GRU" / "src"
     if args.gru_model is None:
         args.gru_model = model_root / "gru_model.pth"
@@ -848,6 +870,8 @@ def evaluate(
         "neural_methods": [spec.name for spec in model_specs],
         "methods": methods,
         "eval_data_dir": str(args.eval_data_dir),
+        "parameters": str(args.parameters_path_used),
+        "thrust_curve": str(args.thrust_curve_path_used),
         "flight_files_discovered": len(files),
         "flights_evaluated": len(rows),
         "skipped_files": skipped,
@@ -1112,6 +1136,8 @@ def write_outputs(
         f"Primary neural method for examples: {summary['primary_method']}",
         f"External files evaluated: {summary['flights_evaluated']} "
         f"(skipped: {len(summary['skipped_files'])})",
+        f"RK4 parameters: {summary['parameters']}",
+        f"RK4 thrust curve: {summary['thrust_curve']}",
         f"Windows evaluated: {summary['windows_evaluated']:,}",
         f"Runtime: {summary['runtime_seconds'] / 60:.2f} minutes",
         f"Failure threshold: >{summary['threshold_m']:.1f} m window RMSE",
@@ -1450,8 +1476,14 @@ def main() -> int:
         log(f"  {spec.name}: {spec.path} ({spec.output_mode})")
     GRU, calculate_x_b, load_parameters, load_thrust_curve = configure_imports(args.repo)
     config_root = args.repo / "source_model" / "R7_SIMLE" / "R7_OUTPUT"
-    parameters = load_parameters(config_root / "parameters.json")
-    thrust_curve = load_thrust_curve(config_root / "thrust_source.csv")
+    parameters_path = args.parameters or config_root / "parameters.json"
+    thrust_curve_path = args.thrust_curve or config_root / "thrust_source.csv"
+    args.parameters_path_used = parameters_path
+    args.thrust_curve_path_used = thrust_curve_path
+    log(f"RK4 parameters: {parameters_path}")
+    log(f"RK4 thrust curve: {thrust_curve_path}")
+    parameters = load_parameters(parameters_path)
+    thrust_curve = load_thrust_curve(thrust_curve_path)
     sampling_rate = 500.0 / args.downsample
     device, gpu_ids = select_device(args)
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs, scaler_meta = compute_scalers(

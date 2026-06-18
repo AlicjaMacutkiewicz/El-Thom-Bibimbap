@@ -48,6 +48,8 @@ def parse_args():
     parser.add_argument("--downsample", type=int, default=25)
     parser.add_argument("--resume-from", type=str, default=None)
     parser.add_argument("--model-type", type=str, default="gru_res_phys")
+    parser.add_argument("--parameters", type=str, default=None)
+    parser.add_argument("--thrust-curve", type=str, default=None)
 
     return parser.parse_args()
 
@@ -70,12 +72,19 @@ def main():
 
     # load physics parameters
     parameters_path, thrust_curve_path = default_physics_paths()
+    if args.parameters:
+        parameters_path = args.parameters
+    if args.thrust_curve:
+        thrust_curve_path = args.thrust_curve
     parameters = load_parameters(parameters_path)
     thrust_curve = load_thrust_curve(thrust_curve_path)
 
     # load flight data
     flights_inputs, flights_targets, flight_positions, flight_times = read_flight_data(
-        args.start_flight, args.num_flights, output_dir=args.output_dir, downsample=args.downsample
+        args.start_flight,
+        args.num_flights,
+        output_dir=args.output_dir,
+        downsample=args.downsample,
     )
 
     # train / test data split

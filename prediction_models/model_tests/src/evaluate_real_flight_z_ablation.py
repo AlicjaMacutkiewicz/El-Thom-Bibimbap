@@ -224,18 +224,28 @@ def resolve_paths(args: argparse.Namespace) -> None:
     args.flight = args.flight.expanduser().resolve()
 
     model_root = args.repo / "prediction_models" / "model_tests" / "final_model"
+
+    def resolve_model_path(value: Path | None, default: Path) -> Path | None:
+        if value is None:
+            return default
+        if str(value).strip().lower() in {"none", "skip", "-"}:
+            return None
+        return value.expanduser().resolve()
+
     if args.gru_model is None:
         args.gru_model = model_root / "gru_model.pth"
     else:
-        args.gru_model = args.gru_model.expanduser().resolve()
+        args.gru_model = resolve_model_path(args.gru_model, model_root / "gru_model.pth")
     if args.gru_res_model is None:
         args.gru_res_model = model_root / "gru_res_model.pth"
     else:
-        args.gru_res_model = args.gru_res_model.expanduser().resolve()
+        args.gru_res_model = resolve_model_path(args.gru_res_model, model_root / "gru_res_model.pth")
     if args.gru_res_phys_model is None:
         args.gru_res_phys_model = model_root / "gru_res_phys_model.pth"
     else:
-        args.gru_res_phys_model = args.gru_res_phys_model.expanduser().resolve()
+        args.gru_res_phys_model = resolve_model_path(
+            args.gru_res_phys_model, model_root / "gru_res_phys_model.pth"
+        )
 
     if args.scaler_npz is None:
         args.scaler_npz = (
@@ -473,13 +483,27 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
     sampling_rate = float(1.0 / np.median(dt))
 
     model_specs = [
-        ModelSpec(PLAIN_GRU_METHOD, args.gru_model, "direct"),
-        ModelSpec(GRU_RK4_METHOD, args.gru_res_model, "residual"),
-        ModelSpec(GRU_RK4_PHYS_METHOD, args.gru_res_phys_model, "residual"),
+        ModelSpec(name, path, output_mode)
+        for name, path, output_mode in [
+            (PLAIN_GRU_METHOD, args.gru_model, "direct"),
+            (GRU_RK4_METHOD, args.gru_res_model, "residual"),
+            (GRU_RK4_PHYS_METHOD, args.gru_res_phys_model, "residual"),
+        ]
+        if path is not None
     ]
+    if not model_specs:
+        raise RuntimeError("At least one neural checkpoint must be selected.")
     for spec in model_specs:
         if not spec.path.exists():
             raise FileNotFoundError(f"{spec.name} checkpoint not found: {spec.path}")
+    neural_methods = [spec.name for spec in model_specs]
+    position_methods = neural_methods + [
+        "Polynomial",
+        "RK4 only",
+        "Last acceleration",
+        "Oracle acceleration",
+    ]
+    acceleration_methods = neural_methods + ["RK4 only", "Last acceleration"]
 
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs = load_scalers(args.scaler_npz)
     device, gpu_ids = select_device(args)
@@ -544,17 +568,17 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
         windows["future_times"],
     )
 
-    position_metrics = {method: OneDimMetric() for method in POSITION_METHODS}
-    acceleration_metrics = {method: OneDimMetric() for method in ACCELERATION_METHODS}
+    position_metrics = {method: OneDimMetric() for method in position_methods}
+    acceleration_metrics = {method: OneDimMetric() for method in acceleration_methods}
     window_rmse_by_method: dict[str, np.ndarray] = {}
     acc_rmse_by_method: dict[str, np.ndarray] = {}
-    for method in POSITION_METHODS:
+    for method in position_methods:
         window_rmse_by_method[method] = position_metrics[method].add(
             position_predictions[method],
             windows["actual_position_z"],
             args.position_threshold,
         )
-    for method in ACCELERATION_METHODS:
+    for method in acceleration_methods:
         acc_rmse_by_method[method] = acceleration_metrics[method].add(
             acceleration_predictions[method],
             windows["actual_acceleration_z"],
@@ -569,14 +593,14 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
             "start_time_s": float(windows["future_times"][index, 0]),
             "lead_time_s": float(lead_seconds[index]),
         }
-        for method in POSITION_METHODS:
+        for method in position_methods:
             key = method_key(method)
             row[f"{key}_position_z_window_rmse_m"] = float(window_rmse_by_method[method][index])
             row[f"{key}_position_z_endpoint_error_m"] = float(
                 position_predictions[method][index, -1]
                 - windows["actual_position_z"][index, -1]
             )
-        for method in ACCELERATION_METHODS:
+        for method in acceleration_methods:
             key = method_key(method)
             row[f"{key}_acceleration_z_window_rmse"] = float(acc_rmse_by_method[method][index])
         rows.append(row)
@@ -587,6 +611,8 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
             {"name": spec.name, "path": str(spec.path), "output_mode": spec.output_mode}
             for spec in model_specs
         ],
+        "position_methods": position_methods,
+        "acceleration_methods": acceleration_methods,
         "parameters": str(args.parameters),
         "thrust_curve": str(args.thrust_curve),
         "scaler_npz": str(args.scaler_npz),
@@ -607,10 +633,10 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
         "position_threshold_m": args.position_threshold,
         "acc_threshold": args.acc_threshold,
         "position_z_metrics": {
-            method: position_metrics[method].summarize() for method in POSITION_METHODS
+            method: position_metrics[method].summarize() for method in position_methods
         },
         "acceleration_z_metrics": {
-            method: acceleration_metrics[method].summarize() for method in ACCELERATION_METHODS
+            method: acceleration_metrics[method].summarize() for method in acceleration_methods
         },
         "validation_scope": {
             "validated": [
@@ -639,7 +665,7 @@ def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> 
             writer.writerows(rows)
 
     lines = [
-        "REAL FLIGHT REPLAY SUMMARY - Z AXIS ONLY - ALL NON-RETRAINED MODELS",
+        "REAL FLIGHT REPLAY SUMMARY - Z AXIS ONLY",
         f"Flight: {summary['flight']}",
         f"Parameters: {summary['parameters']}",
         f"Thrust curve: {summary['thrust_curve']}",
@@ -655,7 +681,7 @@ def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> 
         "",
         "Z POSITION FORECAST METRICS",
     ]
-    for method in POSITION_METHODS:
+    for method in summary["position_methods"]:
         item = summary["position_z_metrics"][method]
         lines.append(
             f"{method:20s} point_RMSE={item['point_rmse']:.3f} m  "
@@ -666,7 +692,7 @@ def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> 
             f"({item['failure_rate_pct']:.3f}%)"
         )
     lines.extend(["", "Z ACCELERATION FORECAST METRICS"])
-    for method in ACCELERATION_METHODS:
+    for method in summary["acceleration_methods"]:
         item = summary["acceleration_z_metrics"][method]
         lines.append(
             f"{method:20s} point_RMSE={item['point_rmse']:.3f}  "
@@ -700,12 +726,16 @@ def render_plots(args: argparse.Namespace, summary: dict, rows: list[dict]) -> N
     position = summary["position_z_metrics"]
     acceleration = summary["acceleration_z_metrics"]
     comparison = [
-        PLAIN_GRU_METHOD,
-        GRU_RK4_METHOD,
-        GRU_RK4_PHYS_METHOD,
-        "Polynomial",
-        "RK4 only",
-        "Last acceleration",
+        method
+        for method in [
+            PLAIN_GRU_METHOD,
+            GRU_RK4_METHOD,
+            GRU_RK4_PHYS_METHOD,
+            "Polynomial",
+            "RK4 only",
+            "Last acceleration",
+        ]
+        if method in position
     ]
 
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -734,9 +764,9 @@ def render_plots(args: argparse.Namespace, summary: dict, rows: list[dict]) -> N
 
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.bar(
-        ACCELERATION_METHODS,
-        [acceleration[method]["mean_window_rmse"] for method in ACCELERATION_METHODS],
-        color=[COLORS[method] for method in ACCELERATION_METHODS],
+        summary["acceleration_methods"],
+        [acceleration[method]["mean_window_rmse"] for method in summary["acceleration_methods"]],
+        color=[COLORS[method] for method in summary["acceleration_methods"]],
     )
     ax.set_title("Real Flight Z Acceleration Mean Window RMSE")
     ax.set_ylabel("Mean window RMSE")
@@ -750,6 +780,8 @@ def render_plots(args: argparse.Namespace, summary: dict, rows: list[dict]) -> N
         data = pd.DataFrame(rows)
         fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
         for method in [GRU_RK4_PHYS_METHOD, PLAIN_GRU_METHOD, "Polynomial", "Last acceleration"]:
+            if method not in position:
+                continue
             axes[0].plot(
                 data["start_time_s"],
                 data[f"{method_key(method)}_position_z_window_rmse_m"],
@@ -765,6 +797,8 @@ def render_plots(args: argparse.Namespace, summary: dict, rows: list[dict]) -> N
         axes[0].legend()
 
         for method in [GRU_RK4_PHYS_METHOD, PLAIN_GRU_METHOD, "Last acceleration"]:
+            if method not in acceleration:
+                continue
             axes[1].plot(
                 data["start_time_s"],
                 data[f"{method_key(method)}_acceleration_z_window_rmse"],
@@ -796,6 +830,8 @@ def main() -> int:
         args.parameters,
         args.thrust_curve,
     ]:
+        if path is None:
+            continue
         if not path.exists():
             raise FileNotFoundError(path)
 
