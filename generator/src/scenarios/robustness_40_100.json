@@ -3,17 +3,20 @@
     "propellant_fraction": {
         "mode": "uniform",
         "min": 0.4,
-        "max": 1.0
+        "max": 1.0,
+        "step": 0.01
     },
     "pressure_scale": {
         "mode": "uniform",
         "min": 0.4,
-        "max": 1.0
+        "max": 1.0,
+        "step": 0.01
     },
     "rocket_mass_scale": {
         "mode": "uniform",
         "min": 0.9,
-        "max": 1.3
+        "max": 1.3,
+        "step": 0.01
     },
     "write_metadata": true
 }

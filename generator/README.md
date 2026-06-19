@@ -88,4 +88,6 @@ Pressure scaling is applied in memory from the base thrust curve; the generator
 does not write one scaled thrust CSV per flight.
 
 The provided `robustness_40_100` scenario samples propellant fraction and
-pressure scale from `0.4` to `1.0`, and rocket mass scale from `0.7` to `1.3`.
+pressure scale from `0.4` to `1.0`, and rocket mass scale from `0.9` to `1.3`.
+All three values are quantized to `0.01` steps, which preserves broad domain
+coverage while making deterministic RK4 baselines easier to cache and compare.

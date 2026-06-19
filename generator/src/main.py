@@ -404,6 +404,17 @@ def sample_scenario_value(spec, rng, name, normalize=_normalize_fraction):
             raise ValueError(
                 f"{name} uniform range must have min <= max, got {min_value} > {max_value}"
             )
+        if "step" in spec:
+            step = normalize(spec["step"], f"{name}.step")
+            if step <= 0.0:
+                raise ValueError(f"{name} step must be positive, got {step}")
+            min_index = int(np.ceil((min_value - 1e-12) / step))
+            max_index = int(np.floor((max_value + 1e-12) / step))
+            if min_index > max_index:
+                raise ValueError(
+                    f"{name} step {step} leaves no values in range {min_value} - {max_value}"
+                )
+            return round(float(rng.integers(min_index, max_index + 1) * step), 10)
         return float(rng.uniform(min_value, max_value))
     if mode == "choice":
         choices = [normalize(value, name) for value in spec["values"]]
