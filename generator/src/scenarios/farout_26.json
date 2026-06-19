@@ -1,0 +1,16 @@
+{
+    "name": "farout_26",
+    "propellant_fraction": {
+        "mode": "constant",
+        "value": 0.4583333333333333
+    },
+    "pressure_scale": {
+        "mode": "constant",
+        "value": 0.85
+    },
+    "rocket_mass_scale": {
+        "mode": "constant",
+        "value": 1.0
+    },
+    "write_metadata": true
+}

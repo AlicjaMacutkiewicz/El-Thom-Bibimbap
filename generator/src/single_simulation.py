@@ -102,6 +102,7 @@ def run_single_simulation(
     acceleration_thresholds,
     angular_velocity_thresholds,
     i,
+    scenario_metadata=None,
 ):
     current_flight = Flight(
         heading=heading, environment=environment, rocket=rocket, rail_length=rail_length
@@ -194,6 +195,9 @@ def run_single_simulation(
         final_df = all_accels_df[final_cols].copy()
         final_df.ffill(inplace=True)
         final_df.bfill(inplace=True)
+        if scenario_metadata:
+            for key, value in scenario_metadata.items():
+                final_df[f"Scenario_{key}"] = value
         # final_df.to_csv(os.path.join(dir, f"output/flight_{current_date}_test_sensors.csv"), index_label="Time")
         final_df["flight_id"] = current_date.date()
         Log.print_info(f"Pakowanko... {current_date.date()}")

@@ -5,6 +5,7 @@ import os
 import copy
 import random
 import sys
+from pathlib import Path
 
 # import cProfile
 import time
@@ -330,6 +331,110 @@ def init_paths_from_json(main_paths_file):
     return dataset
 
 
+def _resolve_path(path):
+    return Path(path).expanduser()
+
+
+def _normalize_fraction(value, name):
+    value = float(value)
+    if value > 1.0:
+        value /= 100.0
+    if value < 0.0:
+        raise ValueError(f"{name} must be non-negative, got {value}")
+    return value
+
+
+def _normalize_scale(value, name):
+    value = float(value)
+    if value > 10.0:
+        value /= 100.0
+    if value <= 0.0:
+        raise ValueError(f"{name} must be positive, got {value}")
+    return value
+
+
+def _range_spec(min_value, max_value):
+    return {
+        "mode": "uniform" if min_value != max_value else "constant",
+        "min": min_value,
+        "max": max_value,
+        "value": min_value,
+    }
+
+
+def default_scenario():
+    return {
+        "name": "nominal",
+        "propellant_fraction": {"mode": "constant", "value": 1.0},
+        "pressure_scale": {"mode": "constant", "value": 1.0},
+        "rocket_mass_scale": {"mode": "constant", "value": 1.0},
+        "write_metadata": True,
+    }
+
+
+def load_scenario(path):
+    scenario = default_scenario()
+    if path is None:
+        return scenario
+
+    with open(path, encoding="utf-8") as file:
+        loaded = json.load(file)
+
+    scenario.update(loaded)
+    if "propellant_fraction" not in loaded and "oxidizer_fraction" in loaded:
+        scenario["propellant_fraction"] = loaded["oxidizer_fraction"]
+    if "rocket_mass_scale" not in loaded and "mass_scale" in loaded:
+        scenario["rocket_mass_scale"] = loaded["mass_scale"]
+    return scenario
+
+
+def sample_scenario_value(spec, rng, name, normalize=_normalize_fraction):
+    if isinstance(spec, (int, float)):
+        return normalize(spec, name)
+    if not isinstance(spec, dict):
+        raise ValueError(f"{name} scenario entry must be a number or object, got {spec!r}")
+
+    mode = spec.get("mode", "constant")
+    if mode == "constant":
+        return normalize(spec.get("value", spec.get("min", 1.0)), name)
+    if mode == "uniform":
+        min_value = normalize(spec["min"], name)
+        max_value = normalize(spec["max"], name)
+        if min_value > max_value:
+            raise ValueError(
+                f"{name} uniform range must have min <= max, got {min_value} > {max_value}"
+            )
+        return float(rng.uniform(min_value, max_value))
+    if mode == "choice":
+        choices = [normalize(value, name) for value in spec["values"]]
+        return float(rng.choice(choices))
+    raise ValueError(f"unknown scenario mode for {name}: {mode!r}")
+
+
+def load_scaled_thrust_curve(thrust_path, pressure_scale):
+    thrust_path = _resolve_path(thrust_path)
+    curve = np.loadtxt(thrust_path, delimiter=",", dtype=np.float64)
+    if curve.ndim != 2 or curve.shape[1] != 2:
+        raise ValueError(f"thrust curve must have two columns: {thrust_path}")
+
+    scaled = curve.copy()
+    scaled[:, 1] *= float(pressure_scale)
+    return scaled
+
+
+def sample_scenario(scenario, rng):
+    propellant_fraction = sample_scenario_value(
+        scenario.get("propellant_fraction", 1.0), rng, "propellant_fraction"
+    )
+    pressure_scale = sample_scenario_value(
+        scenario.get("pressure_scale", 1.0), rng, "pressure_scale", _normalize_scale
+    )
+    rocket_mass_scale = sample_scenario_value(
+        scenario.get("rocket_mass_scale", 1.0), rng, "rocket_mass_scale", _normalize_scale
+    )
+    return propellant_fraction, pressure_scale, rocket_mass_scale
+
+
 def prefetch_weather_environments(date_table, environment_data):
     Log.print_info("pre-fetching weather data from api...")
     prefetched_envs = {}
@@ -367,13 +472,6 @@ def prefetch_weather_environments(date_table, environment_data):
     Log.print_info("all weather data pre-fetched")
     return prefetched_envs
 
-
-
-#for those who come afer
-#te zmiany pozwalaja wytrenowac ten model ale oglnie to powinno byc wykonane znacznie bardziej etycznie i programistycznie
-#postaram sie to zrobic jutro ale to jest kwestia zmienienia kilku znaczacych rzeczy w grzesiu
-
-
 def parallel_generator(
     amount_in_parrallel,
     date_table,
@@ -384,14 +482,11 @@ def parallel_generator(
     heading,
     rail_length,
     sensor_list,  
-    thrust_path_100, #to rozwiazanie jest lopatologiczne ale no mamy tylko dwa pliki csv jeden dla normalnego tankowania drugi dla tego na konkursie
-    thrust_path_60,  #todo zmienic to na mape klucz -> stopien zatankowania, wartosc -> plik csv
-    prob_full_fuel,  #zmiany ktore prowadziłem wczeniej (fuel_min, fuel_max) sa teraz useless ale przy roziazaniu bardziej "clean", beda uzyteczne dlatego poki co sa w kodzie
+    thrust_path,
+    scenario,
     stochastic_motor_params,
     acceleration_thresholds,
     angular_velocity_thresholds,
-    fuel_min,
-    fuel_max
 ):
     N = len(date_table)
     indices = range(N)
@@ -420,8 +515,8 @@ def parallel_generator(
             
             rng = np.random.default_rng(i)
 
-            fuel_fraction = rng.uniform(fuel_min, fuel_max)
-            thrust_path = thrust_path_100 if fuel_fraction >= 0.999 else thrust_path_60
+            propellant_fraction, pressure_scale, rocket_mass_scale = sample_scenario(scenario, rng)
+            scaled_thrust_curve = load_scaled_thrust_curve(thrust_path, pressure_scale)
             
             #dla osob zastanawiajacych sie czemu kopia
             #każdy proces musi mieć osobny plik json ponieważ go modyfikujemy
@@ -429,9 +524,13 @@ def parallel_generator(
             #czy powinniśmy tak zrobić, tbh nie wiem, ponieważ funkcje konfuguracyjne z pliku json beda wtedy troche nie ładne pozdraiwam
             temp_model_data = copy.deepcopy(model_data)
 
-            temp_model_data["motors"]["grain_initial_height"] *= fuel_fraction
+            temp_model_data["motors"]["grain_initial_height"] *= propellant_fraction
+            temp_model_data["rocket"]["mass"] *= rocket_mass_scale
+            temp_model_data["rocket"]["inertia"] = [
+                value * rocket_mass_scale for value in temp_model_data["rocket"]["inertia"]
+            ]
             
-            base_motor = init_base_motor_from_JSON(temp_model_data, thrust_path)
+            base_motor = init_base_motor_from_JSON(temp_model_data, scaled_thrust_curve)
             stochastic_motor = init_stochastic_motor(base_motor, stochastic_motor_params)
 
             sampled_motor = stochastic_motor.create_object()
@@ -460,6 +559,16 @@ def parallel_generator(
                 acceleration_thresholds,
                 angular_velocity_thresholds,
                 i,
+                scenario_metadata={
+                    "Name": scenario.get("name", "unnamed"),
+                    "Propellant_Fraction": propellant_fraction,
+                    "Pressure_Scale": pressure_scale,
+                    "Rocket_Mass_Scale": rocket_mass_scale,
+                    "Rocket_Mass_Kg": temp_model_data["rocket"]["mass"],
+                    "Base_Thrust_Source": str(thrust_path),
+                }
+                if scenario.get("write_metadata", True)
+                else None,
             )
             return current_date
 
@@ -490,6 +599,7 @@ def main():
     fuel_explicit = False
     paths_file = "paths.json"
     generation_mode = "nominal"
+    scenario_file = None
 
     args = sys.argv[1:]
 
@@ -501,7 +611,15 @@ def main():
     if "--competition-day" in args:
         generation_mode = "far_out_26_competition_day"
         paths_file = "paths_farout_26.json"
+        scenario_file = "scenarios/farout_26.json"
         args.remove("--competition-day")
+
+    if "--scenario" in args:
+        idx = args.index("--scenario")
+        scenario_file = args[idx + 1]
+        generation_mode = Path(scenario_file).stem
+        args.pop(idx + 1)
+        args.remove("--scenario")
 
     if "--paths" in args:
         idx = args.index("--paths")
@@ -529,14 +647,9 @@ def main():
         args.remove("--fuel")
         Log.print_info(f"fuel level is set to: {fuel_min*100}% - {fuel_max*100}%")
 
-    if generation_mode == "far_out_26_competition_day" and not fuel_explicit:
-        # Proxy for the measured FAR-OUT 26 oxidizer load: 5.5 kg against the
-        # nominal 12 kg propellant-equivalent scale used by this generator.
-        fuel_min = fuel_max = 5.5 / 12.0
-        Log.print_info(
-            "competition-day mode: fuel/oxidizer proxy defaults to "
-            f"{fuel_min * 100:.3f}%"
-        )
+    scenario = load_scenario(scenario_file)
+    if fuel_explicit:
+        scenario["propellant_fraction"] = _range_spec(fuel_min, fuel_max)
 
     try:
         if len(args) >= 2:
@@ -553,6 +666,7 @@ def main():
     print(f"generating simulations from {year_start} to {year_end}...")
     Log.print_info(f"generation mode: {generation_mode}")
     Log.print_info(f"paths file: {paths_file}")
+    Log.print_info(f"scenario: {scenario.get('name', 'unnamed')}")
 
     paths = init_paths_from_json(paths_file)
     environment_data = get_environment_data_from_JSON(paths["config_path"])
@@ -636,14 +750,13 @@ def main():
         heading=heading,
         rail_length=rail_length,
         sensor_list=sensor_list,
-        thrust_path_100=paths["source_model_path"]["thrust_source_100"],
-        thrust_path_60=paths["source_model_path"]["thrust_source_60"],
-        prob_full_fuel=0.6,
+        thrust_path=paths["source_model_path"].get(
+            "thrust_source", paths["source_model_path"]["thrust_source_100"]
+        ),
+        scenario=scenario,
         stochastic_motor_params=stochastic_motor_params,
         acceleration_thresholds=acceleration_thresholds,
         angular_velocity_thresholds=angular_velocity_thresholds,
-        fuel_min = fuel_min,
-        fuel_max = fuel_max
     )
 
     successful_dates = [d for d in results if d is not None]
@@ -652,6 +765,7 @@ def main():
     with open(log_file, "a", encoding="utf-8") as f:
         f.write(f"\n--- batch Run: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ---\n")
         f.write(f"total attempted: {len(date_table)} | successful: {len(successful_dates)}\n")
+        f.write(f"mode: {generation_mode} | scenario: {scenario.get('name', 'unnamed')}\n")
         for date in successful_dates:
             f.write(f"{date.strftime('%Y-%m-%d')}\n")
 
@@ -662,16 +776,6 @@ def main():
     formatted_time = str(datetime.timedelta(seconds=int(total_seconds)))
     print(f"total processing time: {formatted_time}")
 
-
-#Again moze nawet dziś to zrobie ale chce żeby osoby czytające ten commit rozumialy o co mi chodzi 
-#Zalecenia fryderyka fazbera:
-#problem jest taki że dla danego poziomu paliwa wypada mieć no csvke z ciągiem 
-#aktulanie (z tego co wiem) mamy 2 takie pliki jeden normalny a drugi dla niezatankowanego (60%)
-#no i teraz mamy hardcoded dwie sciezki (thrust_path_100,60)
-#celem tej zmiany jest just odpalenie grzegora sprawdzenie czy sama idea dziala
-#nie zmiania to fakut ze zrobie z tego clean solution ktore bedzie zakladac dynamiczne dodawanie sciezek z csv 
-#i generator bedzie je dopieral na podstawie zakresu ktory pwrowadzilem wczenisej
-#(fuel_min , fuel_max)
 
 if __name__ == "__main__":
     mp.set_start_method("spawn", force=True)

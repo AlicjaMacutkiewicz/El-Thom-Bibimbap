@@ -60,12 +60,32 @@ python main.py
 python main.py --competition-day 2020 2021
 ```
 
+**Robustness/domain-randomization configuration:**
+```bash
+python main.py --scenario scenarios/robustness_40_100.json 2020 2021
+```
+
 The default `paths.json` file points to the nominal R7 configuration in
 `source_model/R7_SIMLE/R7_OUTPUT`. The `--competition-day` flag switches the
 generator to `paths_farout_26.json`, which points to the FAR-OUT 2026
 configuration in `source_model/R7_SIMLE/R7_FAROUT_26`. This keeps the nominal
 configuration and the launch-day approximation separate and traceable.
 
-Unless `--fuel` is provided explicitly, competition-day mode uses the current
-FAR-OUT oxidizer-load proxy derived from 5.5 kg against the nominal 12 kg
-generator scale.
+Flight-condition variation is controlled by scenario JSON files in
+`generator/src/scenarios`. A scenario can sample:
+* `propellant_fraction`: multiplier applied to the base motor grain height as a
+  generic propellant-load proxy,
+* `pressure_scale`: multiplier applied to the selected thrust curve before the
+  simulation starts,
+* `rocket_mass_scale`: multiplier applied to the configured rocket mass and
+  inertia.
+
+These values are written into the generated Parquet files as `Scenario_*`
+metadata columns for traceability, but they are not part of the GRU model input.
+The legacy `--fuel` option is still accepted and overrides only the scenario
+`propellant_fraction`.
+Pressure scaling is applied in memory from the base thrust curve; the generator
+does not write one scaled thrust CSV per flight.
+
+The provided `robustness_40_100` scenario samples propellant fraction and
+pressure scale from `0.4` to `1.0`, and rocket mass scale from `0.7` to `1.3`.
