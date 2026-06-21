@@ -12,5 +12,9 @@
         "mode": "constant",
         "value": 1.0
     },
+    "drag_multiplier": {
+        "mode": "constant",
+        "value": 1.0
+    },
     "write_metadata": true
 }

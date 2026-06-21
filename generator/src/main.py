@@ -22,7 +22,7 @@ from enviroment_api import (
 )
 from logger import Log
 from pathos.multiprocessing import ProcessPool
-from rocketpy import Accelerometer, Barometer, Environment, Gyroscope, Rocket, SolidMotor
+from rocketpy import Accelerometer, Barometer, Environment, Function, Gyroscope, Rocket, SolidMotor
 from rocketpy.stochastic import StochasticEnvironment, StochasticSolidMotor
 from single_simulation import run_single_simulation
 
@@ -56,7 +56,7 @@ def _descending_above_altitude_trigger(minimum_altitude):
     return trigger
 
 
-def init_rocket_from_JSON(data, drag_curve_csv, motor):
+def init_rocket_from_JSON(data, drag_curve, motor):
     name = data["id"]["rocket_name"]
 
     Log.print_info(f"Loading model: {name}")
@@ -67,8 +67,8 @@ def init_rocket_from_JSON(data, drag_curve_csv, motor):
         radius=rocket_data["radius"],
         mass=rocket_data["mass"],
         inertia=tuple(rocket_data["inertia"]),
-        power_off_drag=drag_curve_csv,
-        power_on_drag=drag_curve_csv,
+        power_off_drag=drag_curve,
+        power_on_drag=drag_curve,
         center_of_mass_without_motor=rocket_data["center_of_mass_without_propellant"],
         coordinate_system_orientation=rocket_data["coordinate_system_orientation"],
     )
@@ -404,6 +404,7 @@ def default_scenario():
         "oxidizer_fraction": {"mode": "constant", "value": 1.0},
         "pressure_scale": {"mode": "constant", "value": 1.0},
         "rocket_mass_scale": {"mode": "constant", "value": 1.0},
+        "drag_multiplier": {"mode": "constant", "value": 1.0},
         "legacy_propellant_scaling": False,
         "write_metadata": True,
     }
@@ -457,6 +458,21 @@ def sample_scenario_value(spec, rng, name, normalize=_normalize_fraction):
     if mode == "choice":
         choices = [normalize(value, name) for value in spec["values"]]
         return float(rng.choice(choices))
+    if mode == "mixture":
+        components = spec["components"]
+        if not components:
+            raise ValueError(f"{name} mixture must contain at least one component")
+        weights = np.asarray(
+            [float(component.get("weight", 1.0)) for component in components],
+            dtype=np.float64,
+        )
+        if np.any(weights < 0.0) or not np.any(weights > 0.0):
+            raise ValueError(f"{name} mixture weights must be non-negative and not all zero")
+        selected = int(rng.choice(len(components), p=weights / weights.sum()))
+        component = {
+            key: value for key, value in components[selected].items() if key != "weight"
+        }
+        return sample_scenario_value(component, rng, name, normalize)
     raise ValueError(f"unknown scenario mode for {name}: {mode!r}")
 
 
@@ -483,6 +499,28 @@ def load_scaled_thrust_curve(
     # the FAR-OUT 2026 48-bar curve. Scale relative to that source condition.
     scaled[:, 1] *= float(pressure_scale) / float(source_pressure_scale)
     return scaled
+
+
+def load_scaled_drag_curve(drag_path, drag_multiplier=1.0):
+    """Return a RocketPy drag function scaled by a latent aerodynamic-loss factor."""
+    drag_path = _resolve_path(drag_path)
+    curve = np.loadtxt(drag_path, delimiter=",", dtype=np.float64)
+    if curve.ndim != 2 or curve.shape[1] != 2:
+        raise ValueError(f"drag curve must have two columns: {drag_path}")
+    if not np.all(np.isfinite(curve)):
+        raise ValueError(f"drag curve contains non-finite values: {drag_path}")
+    if drag_multiplier <= 0.0:
+        raise ValueError(f"drag_multiplier must be positive, got {drag_multiplier}")
+
+    scaled = curve.copy()
+    scaled[:, 1] *= float(drag_multiplier)
+    return Function(
+        scaled,
+        inputs="Mach Number",
+        outputs="Drag Coefficient",
+        interpolation="linear",
+        extrapolation="constant",
+    )
 
 
 def _motor_propellant_mass(motor_data):
@@ -585,7 +623,10 @@ def sample_scenario(scenario, rng):
     rocket_mass_scale = sample_scenario_value(
         scenario.get("rocket_mass_scale", 1.0), rng, "rocket_mass_scale", _normalize_scale
     )
-    return oxidizer_fraction, pressure_scale, rocket_mass_scale
+    drag_multiplier = sample_scenario_value(
+        scenario.get("drag_multiplier", 1.0), rng, "drag_multiplier", _normalize_scale
+    )
+    return oxidizer_fraction, pressure_scale, rocket_mass_scale, drag_multiplier
 
 
 def prefetch_weather_environments(date_table, environment_data):
@@ -650,7 +691,7 @@ def parallel_generator(
 
     def worker(i):
         current_date = date_table[i]
-        oxidizer_fraction = pressure_scale = rocket_mass_scale = None
+        oxidizer_fraction = pressure_scale = rocket_mass_scale = drag_multiplier = None
         try:
             if hasattr(cp, "cuda"):
                 gpu_count = cp.cuda.runtime.getDeviceCount()
@@ -670,7 +711,9 @@ def parallel_generator(
             
             rng = np.random.default_rng(i)
 
-            oxidizer_fraction, pressure_scale, rocket_mass_scale = sample_scenario(scenario, rng)
+            oxidizer_fraction, pressure_scale, rocket_mass_scale, drag_multiplier = (
+                sample_scenario(scenario, rng)
+            )
             
             #dla osob zastanawiajacych sie czemu kopia
             #każdy proces musi mieć osobny plik json ponieważ go modyfikujemy
@@ -691,6 +734,7 @@ def parallel_generator(
                 oxidizer_metadata["burn_time_scale"],
                 source_pressure_scale,
             )
+            scaled_drag_curve = load_scaled_drag_curve(drag_path, drag_multiplier)
             
             base_motor = init_base_motor_from_JSON(temp_model_data, scaled_thrust_curve)
             stochastic_motor = init_stochastic_motor(base_motor, stochastic_motor_params)
@@ -698,7 +742,7 @@ def parallel_generator(
             stochastic_motor._set_stochastic(seed=i)
             sampled_motor = stochastic_motor.create_object()
 
-            rocket = init_rocket_from_JSON(temp_model_data, drag_path, sampled_motor)
+            rocket = init_rocket_from_JSON(temp_model_data, scaled_drag_curve, sampled_motor)
             rocket = add_sensors_to_rocket(rocket, sensor_list)
 
             sl_file = yearly_files[current_date.year]["single"]
@@ -719,6 +763,7 @@ def parallel_generator(
                 "Propellant_Fraction": oxidizer_fraction,
                 "Pressure_Scale": pressure_scale,
                 "Rocket_Mass_Scale": rocket_mass_scale,
+                "Drag_Multiplier": drag_multiplier,
                 "Rocket_Mass_Kg": temp_model_data["rocket"]["mass"],
                 "Effective_Propellant_Mass_Kg": oxidizer_metadata[
                     "effective_propellant_mass_kg"
@@ -762,7 +807,7 @@ def parallel_generator(
         except Exception as e:
             scenario_context = (
                 f"oxidizer={oxidizer_fraction}, pressure={pressure_scale}, "
-                f"mass_scale={rocket_mass_scale}"
+                f"mass_scale={rocket_mass_scale}, drag_multiplier={drag_multiplier}"
             )
             Log.print_error(
                 f"simulation failed for {current_date} ({scenario_context}): {e}\n"

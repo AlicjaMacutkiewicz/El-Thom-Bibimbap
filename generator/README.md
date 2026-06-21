@@ -81,7 +81,8 @@ Flight-condition variation is controlled by scenario JSON files in
 * `pressure_scale`: multiplier applied to the selected thrust curve before the
   simulation starts,
 * `rocket_mass_scale`: multiplier applied to the configured rocket mass and
-  inertia.
+  inertia,
+* `drag_multiplier`: latent multiplier applied to the RocketPy drag curve.
 
 The oxidizer-aware scenario keeps the nominal paraffin grain at launch. The
 fraction expected to burn is represented by the existing RocketPy `SolidMotor`,
@@ -107,11 +108,19 @@ three scenario inputs. `Scenario_Propellant_Fraction` is temporarily emitted as
 a compatibility alias for `Scenario_Oxidizer_Fraction`. The legacy `--fuel`
 option is likewise retained as an alias for `--oxidizer`.
 
+`Scenario_Drag_Multiplier` is recorded for traceability but is intentionally
+excluded from the GRU input schema. The robustness scenario draws 75% of flights
+from a near-nominal `0.75--1.5` range and 25% from a high-loss `1.5--6.0` tail.
+The upper tail is an effective aerodynamic-loss surrogate that may also absorb
+attitude and unmodeled flight losses; it should not be interpreted as a direct
+measurement of clean-body drag coefficient.
+
 Robustness generation uses `robustness_oxidizer_40_100.json` together with
 `paths_robustness.json`. The separate paths file selects
 `R7_ROBUSTNESS/parameters.json`, keeping the nominal and article-era physical
 configuration unchanged. The scenario samples oxidizer and pressure from `0.4`
-to `1.0` and rocket mass from `0.9` to `1.3`, all in `0.01` steps.
+to `1.0`, rocket mass from `0.9` to `1.3`, and latent aerodynamic loss from the
+mixture described above.
 Scaling is performed in memory; no per-flight thrust CSV files are written.
 Files produced by the legacy generic scenario must not be mixed into an
 oxidizer-aware training batch. The model loader rejects variable legacy

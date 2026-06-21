@@ -15,6 +15,7 @@ from main import (  # noqa: E402
     default_scenario,
     init_base_motor_from_JSON,
     init_rocket_from_JSON,
+    load_scaled_drag_curve,
     load_scaled_thrust_curve,
     load_scenario,
     sample_scenario,
@@ -38,7 +39,7 @@ class GeneratorScenarioTest(unittest.TestCase):
         parameters_path = (GENERATOR_SRC / source["parameters"]).resolve()
         thrust_path = (GENERATOR_SRC / source["thrust_source"]).resolve()
         parameters = json.loads(parameters_path.read_text(encoding="utf-8"))
-        fraction, pressure, mass_scale = sample_scenario(
+        fraction, pressure, mass_scale, drag_multiplier = sample_scenario(
             scenario, np.random.default_rng(0)
         )
         metadata = apply_oxidizer_model(parameters, scenario, fraction)
@@ -50,7 +51,16 @@ class GeneratorScenarioTest(unittest.TestCase):
             source_pressure,
         )
         motor = init_base_motor_from_JSON(parameters, thrust)
-        return scenario, fraction, pressure, mass_scale, metadata, thrust, motor
+        return (
+            scenario,
+            fraction,
+            pressure,
+            mass_scale,
+            drag_multiplier,
+            metadata,
+            thrust,
+            motor,
+        )
 
     def test_all_documented_scenarios_construct_a_finite_motor(self):
         cases = [
@@ -65,7 +75,7 @@ class GeneratorScenarioTest(unittest.TestCase):
                 self.assertGreater(motor.propellant_initial_mass, 0.0)
 
     def test_oxidizer_scenario_matches_conditioned_rk4_parameters(self):
-        scenario, fraction, _, _, metadata, thrust, motor = self.build_motor(
+        scenario, fraction, _, _, _, metadata, thrust, motor = self.build_motor(
             "robustness_oxidizer_40_100.json", "paths_robustness.json"
         )
         parameters = json.loads(
@@ -107,7 +117,7 @@ class GeneratorScenarioTest(unittest.TestCase):
         self.assertAlmostEqual(thrust[-1, 0], 10.092 * fraction, places=5)
 
     def test_farout_curve_is_not_pressure_scaled_twice(self):
-        _, _, pressure, _, _, thrust, motor = self.build_motor(
+        _, _, pressure, _, _, _, thrust, motor = self.build_motor(
             "farout_26.json", "paths_farout_26.json"
         )
         source = np.loadtxt(
@@ -118,6 +128,34 @@ class GeneratorScenarioTest(unittest.TestCase):
         self.assertEqual(pressure, 0.85)
         np.testing.assert_allclose(thrust, source)
         self.assertAlmostEqual(motor.propellant_initial_mass, 5.5, places=6)
+
+    def test_drag_multiplier_scales_curve_without_changing_its_domain(self):
+        path = (
+            REPOSITORY
+            / "source_model"
+            / "R7_SIMLE"
+            / "R7_OUTPUT"
+            / "drag_curve.csv"
+        )
+        nominal = load_scaled_drag_curve(path, 1.0)
+        high_drag = load_scaled_drag_curve(path, 6.0)
+
+        for mach in (0.1, 0.3, 0.5, 0.7):
+            self.assertAlmostEqual(float(high_drag(mach)), 6.0 * float(nominal(mach)))
+
+    def test_robustness_drag_distribution_has_nominal_core_and_high_loss_tail(self):
+        scenario = load_scenario(
+            GENERATOR_SRC / "scenarios" / "robustness_oxidizer_40_100.json"
+        )
+        multipliers = np.asarray(
+            [sample_scenario(scenario, np.random.default_rng(seed))[3] for seed in range(400)]
+        )
+        high_loss_rate = float(np.mean(multipliers > 1.5))
+
+        self.assertGreaterEqual(float(multipliers.min()), 0.75)
+        self.assertLessEqual(float(multipliers.max()), 6.0)
+        self.assertGreater(high_loss_rate, 0.15)
+        self.assertLess(high_loss_rate, 0.35)
 
     def test_low_impulse_high_mass_flight_remains_finite(self):
         scenario = load_scenario(
@@ -143,15 +181,13 @@ class GeneratorScenarioTest(unittest.TestCase):
             burn_time_scale=metadata["burn_time_scale"],
         )
         motor = init_base_motor_from_JSON(parameters, thrust)
+        drag = load_scaled_drag_curve(
+            REPOSITORY / "source_model" / "R7_SIMLE" / "R7_OUTPUT" / "drag_curve.csv",
+            6.0,
+        )
         rocket = init_rocket_from_JSON(
             parameters,
-            str(
-                REPOSITORY
-                / "source_model"
-                / "R7_SIMLE"
-                / "R7_OUTPUT"
-                / "drag_curve.csv"
-            ),
+            drag,
             motor,
         )
         environment = Environment(
