@@ -1,42 +1,21 @@
-# creates overlying graphs of each column
+import numpy as np
+from _common import FEATURE_COLUMNS, load_representatives, test_parser
+from matplotlib import pyplot as plt
 
-import matplotlib.pyplot as plt
-import pandas as pd
 
-columns = [
-    "Best_Acc_X",
-    "Best_Acc_Y",
-    "Best_Acc_Z",
-    "Best_AngVel_X",
-    "Best_AngVel_Y",
-    "Best_AngVel_Z",
-    "Barometer_Value",
-    "Sensor_Value",
-    "Thrust",
-    "Mass",
-    "Position_X",
-    "Position_Y",
-    "Position_Z",
-    "Acceleration_X",
-    "Acceleration_Y",
-    "Acceleration_Z",
-]
+def main() -> None:
+    args = test_parser(__doc__).parse_args()
+    _, flights = load_representatives(args)
+    for feature_index, feature in enumerate(FEATURE_COLUMNS):
+        figure, axis = plt.subplots(figsize=(10, 6))
+        for flight in flights:
+            axis.plot(np.linspace(0, 1, len(flight)), flight[:, feature_index], alpha=0.25)
+        axis.set_title(feature)
+        axis.set_xlabel("Normalized flight time")
+        figure.tight_layout()
+        figure.savefig(args.output_dir / f"overlay_{feature}.png", dpi=180)
+        plt.close(figure)
 
-N = 12
-tests = []
 
-for i in range(N):
-    a = pd.read_parquet(f"../src/output/flight_{i}.parquet")
-    tests.append(a)
-
-for col in columns:
-    fig, ax = plt.subplots(figsize=(10, 6), dpi=200)
-
-    for i in range(N):
-        p = tests[i][col]
-        ax.plot(p, alpha=(1 / N))
-
-    ax.set_title(col)
-    ax.legend()
-
-    plt.show()
+if __name__ == "__main__":
+    main()

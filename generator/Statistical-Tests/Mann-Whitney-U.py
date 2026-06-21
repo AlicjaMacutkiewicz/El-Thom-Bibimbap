@@ -1,56 +1,21 @@
-# compares each dataset 0 => not similar, 1 => equal
-
 import numpy as np
-import pandas as pd
-import seaborn as sns
-from matplotlib import pyplot as plt
+from _common import FEATURE_COLUMNS, load_representatives, save_heatmap, test_parser
 from scipy import stats
 
-columns = [
-    "Best_Acc_X",
-    "Best_Acc_Y",
-    "Best_Acc_Z",
-    "Best_AngVel_X",
-    "Best_AngVel_Y",
-    "Best_AngVel_Z",
-    "Barometer_Value",
-    "Sensor_Value",
-    "Thrust",
-    "Mass",
-    "Position_X",
-    "Position_Y",
-    "Position_Z",
-    "Acceleration_X",
-    "Acceleration_Y",
-    "Acceleration_Z",
-]
 
-N = 12
-matrix = np.zeros((N, N))
+def main() -> None:
+    args = test_parser(__doc__).parse_args()
+    paths, flights = load_representatives(args)
+    matrix = np.zeros((len(flights), len(flights)))
+    for i in range(len(flights)):
+        for j in range(i + 1, len(flights)):
+            values = [stats.mannwhitneyu(flights[i][:, k], flights[j][:, k]).pvalue
+                      for k in range(len(FEATURE_COLUMNS))]
+            score = -np.log10(max(np.median(values), 1e-300))
+            matrix[i, j] = matrix[j, i] = score
+    save_heatmap(matrix, paths, "Mann-Whitney significance (-log10 median p)",
+                 args.output_dir / "mann_whitney_u.png")
 
-for i in range(N):
-    for j in range(N):
-        print(i, " ", j)
-        test1 = pd.read_parquet(f"../src/output/flight_{i}.parquet")
-        test2 = pd.read_parquet(f"../src/output/flight_{j}.parquet")
 
-        values = []
-
-        for col in columns:
-            _, p = stats.mannwhitneyu(test1[col], test2[col], alternative="two-sided")
-            values.append(p)
-
-        matrix[i, j] = np.median(values)
-
-plt.figure(figsize=(8, 6))
-sns.heatmap(
-    matrix,
-    annot=True,
-    fmt=".2f",
-    cmap="coolwarm",
-    xticklabels=[f"F{i}" for i in range(N)],
-    yticklabels=[f"F{i}" for i in range(N)],
-)
-
-plt.title("Flight similarity (Mann-Whitney p-value)")
-plt.show()
+if __name__ == "__main__":
+    main()

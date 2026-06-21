@@ -1,82 +1,38 @@
-# Znajduje anomalie. nie mam pojecia jak dizala ale brzmi cool
-# chyba znajduje loty z najwieksza iloscia anomalii
-
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
-import seaborn as sns
-from sklearn.decomposition import PCA
-from sklearn.preprocessing import StandardScaler
+from _common import load_representatives, save_heatmap, test_parser
 
-columns = [
-    "Best_Acc_X",
-    "Best_Acc_Y",
-    "Best_Acc_Z",
-    "Best_AngVel_X",
-    "Best_AngVel_Y",
-    "Best_AngVel_Z",
-    "Barometer_Value",
-    "Sensor_Value",
-    "Thrust",
-    "Mass",
-    "Position_X",
-    "Position_Y",
-    "Position_Z",
-    "Acceleration_X",
-    "Acceleration_Y",
-    "Acceleration_Z",
-]
-
-N = 12
 WINDOW_SIZE = 50
-N_COMPONENTS = 10
-
-flights = []
-for i in range(N):
-    df = pd.read_parquet(f"../src/output/flight_{i}.parquet")
-    flights.append(df[columns].values)
+COMPONENTS = 10
 
 
-def create_windows(X, window_size):
-    return np.array([X[i : i + window_size].flatten() for i in range(len(X) - window_size)])
+def windows(values: np.ndarray) -> np.ndarray:
+    return np.array([
+        values[index:index + WINDOW_SIZE].ravel()
+        for index in range(len(values) - WINDOW_SIZE + 1)
+    ])
 
 
-scaler = StandardScaler()
-scaler.fit(flights[0])
-flights_scaled = [scaler.transform(f) for f in flights]
+def main() -> None:
+    args = test_parser(__doc__).parse_args()
+    paths, flights = load_representatives(args)
+    mean = flights[0].mean(axis=0)
+    scale = flights[0].std(axis=0)
+    scale[scale < 1e-8] = 1.0
+    scaled = [(flight - mean) / scale for flight in flights]
+    reference = windows(scaled[0])
+    center = reference.mean(axis=0)
+    _, _, basis = np.linalg.svd(reference - center, full_matrices=False)
+    components = basis[:COMPONENTS]
+    errors = []
+    for flight in scaled:
+        flight_windows = windows(flight)
+        centered = flight_windows - center
+        reconstruction = centered @ components.T @ components + center
+        errors.append(np.percentile(np.mean((flight_windows - reconstruction) ** 2, axis=1), 95))
+    matrix = np.log1p(np.abs(np.subtract.outer(errors, errors)))
+    save_heatmap(matrix, paths, "PCA reconstruction error difference (log1p P95)",
+                 args.output_dir / "pca_reconstruction_error.png", ".3f")
 
-flights_windows = [create_windows(f, WINDOW_SIZE) for f in flights_scaled]
 
-pca = PCA(n_components=N_COMPONENTS)
-pca.fit(flights_windows[0])
-
-errors = []
-
-print("errors")
-for i in range(N):
-    print(i)
-    X_w = flights_windows[i]
-
-    X_proj = pca.inverse_transform(pca.transform(X_w))
-    err = np.mean((X_w - X_proj) ** 2, axis=1)
-
-    errors.append(err)
-
-matrix = np.zeros((N, N))
-
-print()
-for i in range(N):
-    for j in range(N):
-        print(i, " ", j)
-
-        e_i = np.percentile(errors[i], 95)
-        e_j = np.percentile(errors[j], 95)
-
-        matrix[i, j] = np.abs(e_i - e_j)
-
-plt.figure(figsize=(8, 6))
-sns.heatmap(matrix, annot=True, fmt=".3f", cmap="coolwarm")
-plt.title("PCA Reconstruction Error (95th percentile)")
-plt.xlabel("Flight")
-plt.ylabel("Flight")
-plt.show()
+if __name__ == "__main__":
+    main()
