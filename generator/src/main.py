@@ -1,14 +1,15 @@
 import calendar
+import copy
 import datetime
 import json
 import os
-import copy
 import random
 import sys
-from pathlib import Path
 
 # import cProfile
 import time
+import traceback
+from pathlib import Path
 
 import multiprocess as mp
 import numpy as np
@@ -44,6 +45,15 @@ except Exception:
 #     thrust_source_csv -> STRING representing path to CSV file
 # @RETURN
 #     rocket -> Initialized rocketpy::Rocket class
+
+
+def _descending_above_altitude_trigger(minimum_altitude):
+    """Trigger an apogee parachute only when it is above the main-deploy altitude."""
+
+    def trigger(_pressure, height, state):
+        return state[5] < 0 and height >= minimum_altitude
+
+    return trigger
 
 
 def init_rocket_from_JSON(data, drag_curve_csv, motor):
@@ -84,10 +94,26 @@ def init_rocket_from_JSON(data, drag_curve_csv, motor):
     )
 
     parachutes = data["parachutes"]
+    altitude_deployments = [
+        float(parachute["deploy_altitude"])
+        for parachute in parachutes.values()
+        if parachute["deploy_event"] != "apogee"
+        and parachute.get("deploy_altitude") is not None
+    ]
+    highest_altitude_deployment = max(altitude_deployments, default=None)
 
     for p_id in parachutes:
         p_data = parachutes[p_id]
-        p_trigger = "apogee" if p_data["deploy_event"] == "apogee" else p_data["deploy_altitude"]
+        if p_data["deploy_event"] == "apogee" and highest_altitude_deployment is not None:
+            # When apogee is below the main deployment altitude, RocketPy's
+            # built-in altitude and apogee triggers otherwise fire together.
+            p_trigger = _descending_above_altitude_trigger(highest_altitude_deployment)
+        else:
+            p_trigger = (
+                "apogee"
+                if p_data["deploy_event"] == "apogee"
+                else p_data["deploy_altitude"]
+            )
 
         rocket.add_parachute(
             name=p_data["name"], cd_s=p_data["cds"], trigger=p_trigger, lag=p_data["deploy_delay"]
@@ -331,6 +357,14 @@ def init_paths_from_json(main_paths_file):
     return dataset
 
 
+def select_thrust_path(source_model_paths):
+    """Select the canonical thrust source with legacy-key compatibility."""
+    thrust_path = source_model_paths.get("thrust_source")
+    if thrust_path is not None:
+        return thrust_path
+    return source_model_paths["thrust_source_100"]
+
+
 def _resolve_path(path):
     return Path(path).expanduser()
 
@@ -339,8 +373,10 @@ def _normalize_fraction(value, name):
     value = float(value)
     if value > 1.0:
         value /= 100.0
-    if value < 0.0:
-        raise ValueError(f"{name} must be non-negative, got {value}")
+    if value <= 0.0:
+        raise ValueError(f"{name} must be positive, got {value}")
+    if value > 1.0:
+        raise ValueError(f"{name} must not exceed 1.0, got {value}")
     return value
 
 
@@ -365,9 +401,10 @@ def _range_spec(min_value, max_value):
 def default_scenario():
     return {
         "name": "nominal",
-        "propellant_fraction": {"mode": "constant", "value": 1.0},
+        "oxidizer_fraction": {"mode": "constant", "value": 1.0},
         "pressure_scale": {"mode": "constant", "value": 1.0},
         "rocket_mass_scale": {"mode": "constant", "value": 1.0},
+        "legacy_propellant_scaling": False,
         "write_metadata": True,
     }
 
@@ -381,8 +418,9 @@ def load_scenario(path):
         loaded = json.load(file)
 
     scenario.update(loaded)
-    if "propellant_fraction" not in loaded and "oxidizer_fraction" in loaded:
-        scenario["propellant_fraction"] = loaded["oxidizer_fraction"]
+    if "oxidizer_fraction" not in loaded and "propellant_fraction" in loaded:
+        scenario["oxidizer_fraction"] = loaded["propellant_fraction"]
+        scenario["legacy_propellant_scaling"] = True
     if "rocket_mass_scale" not in loaded and "mass_scale" in loaded:
         scenario["rocket_mass_scale"] = loaded["mass_scale"]
     return scenario
@@ -422,20 +460,124 @@ def sample_scenario_value(spec, rng, name, normalize=_normalize_fraction):
     raise ValueError(f"unknown scenario mode for {name}: {mode!r}")
 
 
-def load_scaled_thrust_curve(thrust_path, pressure_scale):
+def load_scaled_thrust_curve(
+    thrust_path,
+    pressure_scale,
+    burn_time_scale=1.0,
+    source_pressure_scale=1.0,
+):
     thrust_path = _resolve_path(thrust_path)
     curve = np.loadtxt(thrust_path, delimiter=",", dtype=np.float64)
     if curve.ndim != 2 or curve.shape[1] != 2:
         raise ValueError(f"thrust curve must have two columns: {thrust_path}")
+    if not np.all(np.isfinite(curve)):
+        raise ValueError(f"thrust curve contains non-finite values: {thrust_path}")
+    if np.any(np.diff(curve[:, 0]) <= 0):
+        raise ValueError(f"thrust curve timestamps must be strictly increasing: {thrust_path}")
+    if pressure_scale <= 0 or burn_time_scale <= 0 or source_pressure_scale <= 0:
+        raise ValueError("pressure, source-pressure, and burn-time scales must be positive")
 
     scaled = curve.copy()
-    scaled[:, 1] *= float(pressure_scale)
+    scaled[:, 0] = curve[0, 0] + (curve[:, 0] - curve[0, 0]) * float(burn_time_scale)
+    # A source curve may already represent reduced chamber pressure, as does
+    # the FAR-OUT 2026 48-bar curve. Scale relative to that source condition.
+    scaled[:, 1] *= float(pressure_scale) / float(source_pressure_scale)
     return scaled
 
 
+def _motor_propellant_mass(motor_data):
+    grain_area = np.pi * (
+        motor_data["grain_outer_radius"] ** 2
+        - motor_data["grain_initial_inner_radius"] ** 2
+    )
+    return (
+        motor_data["grain_number"]
+        * grain_area
+        * motor_data["grain_initial_height"]
+        * motor_data["grain_density"]
+    )
+
+
+def apply_oxidizer_model(model_data, scenario, oxidizer_fraction):
+    """Apply a first-order hybrid-motor surrogate without changing motor type.
+
+    The SolidMotor represents only the fraction of fuel and oxidizer expected
+    to be consumed. Unburned paraffin stays attached to the dry rocket mass.
+    Oxidizer availability controls burn duration, while chamber-pressure scale
+    controls thrust magnitude separately.
+    """
+
+    motor_data = model_data["motors"]
+    base_propellant_mass = _motor_propellant_mass(motor_data)
+    config = scenario.get("oxidizer_model")
+
+    if config is None:
+        if oxidizer_fraction != 1.0 and not scenario.get("legacy_propellant_scaling"):
+            raise ValueError(
+                "non-nominal oxidizer_fraction requires an oxidizer_model configuration"
+            )
+        # Preserve the old scenario behavior for reproducibility.
+        motor_data["grain_initial_height"] *= oxidizer_fraction
+        return {
+            "burn_time_scale": 1.0,
+            "nominal_oxidizer_mass_kg": float("nan"),
+            "oxidizer_mass_kg": float("nan"),
+            "fixed_fuel_mass_kg": float("nan"),
+            "unburned_fuel_mass_kg": 0.0,
+            "effective_propellant_mass_kg": base_propellant_mass * oxidizer_fraction,
+            "legacy_propellant_scaling": True,
+        }
+
+    nominal_oxidizer_mass = float(config["nominal_oxidizer_mass_kg"])
+    fixed_fuel_mass = float(config["fixed_fuel_mass_kg"])
+    burn_time_exponent = float(config.get("burn_time_exponent", 1.0))
+    if nominal_oxidizer_mass <= 0 or fixed_fuel_mass < 0:
+        raise ValueError("oxidizer and fixed-fuel masses must be physically valid")
+    if burn_time_exponent <= 0:
+        raise ValueError("burn_time_exponent must be positive")
+
+    configured_propellant_mass = nominal_oxidizer_mass + fixed_fuel_mass
+    if not np.isclose(configured_propellant_mass, base_propellant_mass, rtol=0.02):
+        raise ValueError(
+            "oxidizer_model masses do not match the source motor propellant mass: "
+            f"configured={configured_propellant_mass:.6f} kg, "
+            f"source={base_propellant_mass:.6f} kg"
+        )
+
+    parameter_expectations = {
+        "nominal_oxidizer_mass_kg": nominal_oxidizer_mass,
+        "fixed_fuel_mass_kg": fixed_fuel_mass,
+        "oxidizer_burn_time_exponent": burn_time_exponent,
+    }
+    for key, expected in parameter_expectations.items():
+        configured = motor_data.get(key)
+        if configured is not None and not np.isclose(float(configured), expected):
+            raise ValueError(
+                f"scenario {key}={expected} does not match motor parameters {configured}"
+            )
+
+    oxidizer_mass = nominal_oxidizer_mass * oxidizer_fraction
+    consumed_fuel_mass = fixed_fuel_mass * oxidizer_fraction
+    effective_propellant_mass = oxidizer_mass + consumed_fuel_mass
+    unburned_fuel_mass = fixed_fuel_mass - consumed_fuel_mass
+
+    motor_data["grain_initial_height"] *= effective_propellant_mass / base_propellant_mass
+    model_data["rocket"]["mass"] += unburned_fuel_mass
+
+    return {
+        "burn_time_scale": oxidizer_fraction**burn_time_exponent,
+        "nominal_oxidizer_mass_kg": nominal_oxidizer_mass,
+        "oxidizer_mass_kg": oxidizer_mass,
+        "fixed_fuel_mass_kg": fixed_fuel_mass,
+        "unburned_fuel_mass_kg": unburned_fuel_mass,
+        "effective_propellant_mass_kg": effective_propellant_mass,
+        "legacy_propellant_scaling": False,
+    }
+
+
 def sample_scenario(scenario, rng):
-    propellant_fraction = sample_scenario_value(
-        scenario.get("propellant_fraction", 1.0), rng, "propellant_fraction"
+    oxidizer_fraction = sample_scenario_value(
+        scenario.get("oxidizer_fraction", 1.0), rng, "oxidizer_fraction"
     )
     pressure_scale = sample_scenario_value(
         scenario.get("pressure_scale", 1.0), rng, "pressure_scale", _normalize_scale
@@ -443,7 +585,7 @@ def sample_scenario(scenario, rng):
     rocket_mass_scale = sample_scenario_value(
         scenario.get("rocket_mass_scale", 1.0), rng, "rocket_mass_scale", _normalize_scale
     )
-    return propellant_fraction, pressure_scale, rocket_mass_scale
+    return oxidizer_fraction, pressure_scale, rocket_mass_scale
 
 
 def prefetch_weather_environments(date_table, environment_data):
@@ -494,6 +636,7 @@ def parallel_generator(
     rail_length,
     sensor_list,  
     thrust_path,
+    source_pressure_scale,
     scenario,
     stochastic_motor_params,
     acceleration_thresholds,
@@ -507,6 +650,7 @@ def parallel_generator(
 
     def worker(i):
         current_date = date_table[i]
+        oxidizer_fraction = pressure_scale = rocket_mass_scale = None
         try:
             if hasattr(cp, "cuda"):
                 gpu_count = cp.cuda.runtime.getDeviceCount()
@@ -526,8 +670,7 @@ def parallel_generator(
             
             rng = np.random.default_rng(i)
 
-            propellant_fraction, pressure_scale, rocket_mass_scale = sample_scenario(scenario, rng)
-            scaled_thrust_curve = load_scaled_thrust_curve(thrust_path, pressure_scale)
+            oxidizer_fraction, pressure_scale, rocket_mass_scale = sample_scenario(scenario, rng)
             
             #dla osob zastanawiajacych sie czemu kopia
             #każdy proces musi mieć osobny plik json ponieważ go modyfikujemy
@@ -535,17 +678,25 @@ def parallel_generator(
             #czy powinniśmy tak zrobić, tbh nie wiem, ponieważ funkcje konfuguracyjne z pliku json beda wtedy troche nie ładne pozdraiwam
             temp_model_data = copy.deepcopy(model_data)
 
-            temp_model_data["motors"]["grain_initial_height"] *= propellant_fraction
             temp_model_data["rocket"]["mass"] *= rocket_mass_scale
             temp_model_data["rocket"]["inertia"] = [
                 value * rocket_mass_scale for value in temp_model_data["rocket"]["inertia"]
             ]
+            oxidizer_metadata = apply_oxidizer_model(
+                temp_model_data, scenario, oxidizer_fraction
+            )
+            scaled_thrust_curve = load_scaled_thrust_curve(
+                thrust_path,
+                pressure_scale,
+                oxidizer_metadata["burn_time_scale"],
+                source_pressure_scale,
+            )
             
             base_motor = init_base_motor_from_JSON(temp_model_data, scaled_thrust_curve)
             stochastic_motor = init_stochastic_motor(base_motor, stochastic_motor_params)
 
-            sampled_motor = stochastic_motor.create_object()
             stochastic_motor._set_stochastic(seed=i)
+            sampled_motor = stochastic_motor.create_object()
 
             rocket = init_rocket_from_JSON(temp_model_data, drag_path, sampled_motor)
             rocket = add_sensors_to_rocket(rocket, sensor_list)
@@ -557,8 +708,40 @@ def parallel_generator(
             )
 
             st_environment = StochasticEnvironment(environment=env_base)
+            st_environment._set_stochastic(seed=i)
             environment = st_environment.create_object()
             rng = np.random.default_rng(i)
+
+            scenario_metadata = {
+                "Name": scenario.get("name", "unnamed"),
+                "Oxidizer_Fraction": oxidizer_fraction,
+                # Compatibility alias for the current model input schema.
+                "Propellant_Fraction": oxidizer_fraction,
+                "Pressure_Scale": pressure_scale,
+                "Rocket_Mass_Scale": rocket_mass_scale,
+                "Rocket_Mass_Kg": temp_model_data["rocket"]["mass"],
+                "Effective_Propellant_Mass_Kg": oxidizer_metadata[
+                    "effective_propellant_mass_kg"
+                ],
+                "Burn_Time_Scale": oxidizer_metadata["burn_time_scale"],
+                "Base_Thrust_Source": str(thrust_path),
+                "Base_Thrust_Pressure_Scale": source_pressure_scale,
+            }
+            if not oxidizer_metadata["legacy_propellant_scaling"]:
+                scenario_metadata.update(
+                    {
+                        "Nominal_Oxidizer_Mass_Kg": oxidizer_metadata[
+                            "nominal_oxidizer_mass_kg"
+                        ],
+                        "Oxidizer_Mass_Kg": oxidizer_metadata["oxidizer_mass_kg"],
+                        "Fixed_Fuel_Mass_Kg": oxidizer_metadata[
+                            "fixed_fuel_mass_kg"
+                        ],
+                        "Unburned_Fuel_Mass_Kg": oxidizer_metadata[
+                            "unburned_fuel_mass_kg"
+                        ],
+                    }
+                )
 
             run_single_simulation(
                 current_date,
@@ -570,21 +753,21 @@ def parallel_generator(
                 acceleration_thresholds,
                 angular_velocity_thresholds,
                 i,
-                scenario_metadata={
-                    "Name": scenario.get("name", "unnamed"),
-                    "Propellant_Fraction": propellant_fraction,
-                    "Pressure_Scale": pressure_scale,
-                    "Rocket_Mass_Scale": rocket_mass_scale,
-                    "Rocket_Mass_Kg": temp_model_data["rocket"]["mass"],
-                    "Base_Thrust_Source": str(thrust_path),
-                }
-                if scenario.get("write_metadata", True)
-                else None,
+                scenario_metadata=(
+                    scenario_metadata if scenario.get("write_metadata", True) else None
+                ),
             )
             return current_date
 
         except Exception as e:
-            Log.print_error(f"simulation failed for {current_date}: {e}")
+            scenario_context = (
+                f"oxidizer={oxidizer_fraction}, pressure={pressure_scale}, "
+                f"mass_scale={rocket_mass_scale}"
+            )
+            Log.print_error(
+                f"simulation failed for {current_date} ({scenario_context}): {e}\n"
+                f"{traceback.format_exc()}"
+            )
             return None
         # profiling
         # profiler.disable()
@@ -605,9 +788,9 @@ def main():
     year_start = 1940
     year_end = 1941
 
-    fuel_min = 1.0
-    fuel_max = 1.0
-    fuel_explicit = False
+    oxidizer_min = 1.0
+    oxidizer_max = 1.0
+    oxidizer_explicit = False
     paths_file = "paths.json"
     generation_mode = "nominal"
     scenario_file = None
@@ -638,29 +821,48 @@ def main():
         args.pop(idx + 1)
         args.remove("--paths")
 
-    # Fuel option examples :
-    # --fuel 60-70 (generates flights with randomly selected fuel percentage in this case beatwean 60% and 70%)
-    # --fuel 67 (generates flights with strict 60% fuel val)
-
-    if "--fuel" in args:
-        fuel_explicit = True
-        idx = args.index("--fuel")
-        fuel_val = args[idx + 1]
-        if "-" in fuel_val:
-            f_min, f_max = fuel_val.split("-")
-            fuel_min , fuel_max = float(f_min) / 100.0, float(f_max) / 100.0
+    # --fuel remains as a compatibility alias for --oxidizer.
+    if "--oxidizer" in args and "--fuel" in args:
+        raise ValueError("use either --oxidizer or the legacy --fuel alias, not both")
+    oxidizer_option = (
+        "--oxidizer"
+        if "--oxidizer" in args
+        else "--fuel"
+        if "--fuel" in args
+        else None
+    )
+    if oxidizer_option:
+        oxidizer_explicit = True
+        idx = args.index(oxidizer_option)
+        oxidizer_value = args[idx + 1]
+        if "-" in oxidizer_value:
+            minimum, maximum = oxidizer_value.split("-")
+            oxidizer_min = float(minimum) / 100.0
+            oxidizer_max = float(maximum) / 100.0
         else:
-            fuel_min = float(fuel_val)
-            if fuel_min > 1.0:
-                fuel_min /= 100.0
-            fuel_max = fuel_min
-        args.pop(idx+1)
-        args.remove("--fuel")
-        Log.print_info(f"fuel level is set to: {fuel_min*100}% - {fuel_max*100}%")
+            oxidizer_min = float(oxidizer_value)
+            if oxidizer_min > 1.0:
+                oxidizer_min /= 100.0
+            oxidizer_max = oxidizer_min
+        args.pop(idx + 1)
+        args.remove(oxidizer_option)
+        Log.print_info(
+            f"oxidizer level is set to: {oxidizer_min * 100}% - "
+            f"{oxidizer_max * 100}%"
+        )
 
     scenario = load_scenario(scenario_file)
-    if fuel_explicit:
-        scenario["propellant_fraction"] = _range_spec(fuel_min, fuel_max)
+    if oxidizer_explicit:
+        scenario["oxidizer_fraction"] = _range_spec(oxidizer_min, oxidizer_max)
+        if "oxidizer_model" not in scenario:
+            # Preserve the historical command-line behavior for nominal and
+            # legacy scenarios. Oxidizer-aware generation should use the
+            # dedicated robustness scenario instead.
+            scenario["legacy_propellant_scaling"] = True
+            Log.print_warning(
+                f"{oxidizer_option} is using legacy generic propellant scaling; "
+                "select an oxidizer-aware scenario for the hybrid-motor surrogate"
+            )
 
     try:
         if len(args) >= 2:
@@ -751,6 +953,9 @@ def main():
         yearly_files[year] = {"single": sl_file, "levels": pl_file}
     amount_in_parrallel = 12
 
+    source_model_paths = paths["source_model_path"]
+    thrust_path = select_thrust_path(source_model_paths)
+
     results = parallel_generator(
         amount_in_parrallel=amount_in_parrallel,
         date_table=date_table,
@@ -761,8 +966,9 @@ def main():
         heading=heading,
         rail_length=rail_length,
         sensor_list=sensor_list,
-        thrust_path=paths["source_model_path"].get(
-            "thrust_source", paths["source_model_path"]["thrust_source_100"]
+        thrust_path=thrust_path,
+        source_pressure_scale=float(
+            paths["source_model_path"].get("thrust_source_pressure_scale", 1.0)
         ),
         scenario=scenario,
         stochastic_motor_params=stochastic_motor_params,

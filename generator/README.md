@@ -62,7 +62,8 @@ python main.py --competition-day 2020 2021
 
 **Robustness/domain-randomization configuration:**
 ```bash
-python main.py --scenario scenarios/robustness_40_100.json 2020 2021
+python main.py --paths paths_robustness.json \
+  --scenario scenarios/robustness_oxidizer_40_100.json 2020 2021
 ```
 
 The default `paths.json` file points to the nominal R7 configuration in
@@ -70,24 +71,62 @@ The default `paths.json` file points to the nominal R7 configuration in
 generator to `paths_farout_26.json`, which points to the FAR-OUT 2026
 configuration in `source_model/R7_SIMLE/R7_FAROUT_26`. This keeps the nominal
 configuration and the launch-day approximation separate and traceable.
+The FAR-OUT source thrust curve already represents approximately 85% of nominal
+pressure. Its paths file records that source condition so the scenario's 0.85
+pressure value is retained as metadata without scaling the curve a second time.
 
 Flight-condition variation is controlled by scenario JSON files in
 `generator/src/scenarios`. A scenario can sample:
-* `propellant_fraction`: multiplier applied to the base motor grain height as a
-  generic propellant-load proxy,
+* `oxidizer_fraction`: available oxidizer relative to the nominal load,
 * `pressure_scale`: multiplier applied to the selected thrust curve before the
   simulation starts,
 * `rocket_mass_scale`: multiplier applied to the configured rocket mass and
   inertia.
 
-These values are written into the generated Parquet files as `Scenario_*`
-metadata columns for traceability, but they are not part of the GRU model input.
-The legacy `--fuel` option is still accepted and overrides only the scenario
-`propellant_fraction`.
-Pressure scaling is applied in memory from the base thrust curve; the generator
-does not write one scaled thrust CSV per flight.
+The oxidizer-aware scenario keeps the nominal paraffin grain at launch. The
+fraction expected to burn is represented by the existing RocketPy `SolidMotor`,
+while unburned paraffin is retained in the dry rocket mass. Oxidizer availability
+scales burn duration and pressure scales thrust magnitude, so the first-order
+total-impulse scale is their product. The nominal oxidizer and paraffin masses
+are explicit in the scenario and must match the source motor's total propellant
+mass.
 
-The provided `robustness_40_100` scenario samples propellant fraction and
-pressure scale from `0.4` to `1.0`, and rocket mass scale from `0.9` to `1.3`.
-All three values are quantized to `0.01` steps, which preserves broad domain
-coverage while making deterministic RK4 baselines easier to cache and compare.
+For the R7 robustness surrogate, the revised motor configuration declares
+`12.24 kg` of nominal propellant: `9.87 kg` oxidizer and `2.37 kg` paraffin.
+The converted source geometry evaluates to `12.0 kg`; the generator reconciles
+this small difference when constructing the conditioned motor. The paraffin
+value describes the configured grain, not a direct measurement of consumed
+paraffin during a firing. Likewise, the burn-time
+exponent of `1.0` is a deliberately simple linear surrogate, not a fitted motor
+parameter. Both values are kept explicit so they can be replaced after
+calibration against additional firing data.
+
+Scenario values and derived motor masses are written into generated Parquet
+files as `Scenario_*` metadata columns. The current model pipeline consumes the
+three scenario inputs. `Scenario_Propellant_Fraction` is temporarily emitted as
+a compatibility alias for `Scenario_Oxidizer_Fraction`. The legacy `--fuel`
+option is likewise retained as an alias for `--oxidizer`.
+
+Robustness generation uses `robustness_oxidizer_40_100.json` together with
+`paths_robustness.json`. The separate paths file selects
+`R7_ROBUSTNESS/parameters.json`, keeping the nominal and article-era physical
+configuration unchanged. The scenario samples oxidizer and pressure from `0.4`
+to `1.0` and rocket mass from `0.9` to `1.3`, all in `0.01` steps.
+Scaling is performed in memory; no per-flight thrust CSV files are written.
+Files produced by the legacy generic scenario must not be mixed into an
+oxidizer-aware training batch. The model loader rejects variable legacy
+`Scenario_Propellant_Fraction` data when the canonical
+`Scenario_Oxidizer_Fraction` column is absent.
+
+The legacy `--fuel` and `--oxidizer` command-line overrides continue to apply
+generic grain-height scaling when no `oxidizer_model` is present. They should
+not be used as a substitute for the oxidizer-aware robustness scenario.
+
+Training or evaluating a model on this new batch must use the matching RK4
+configuration:
+
+```bash
+python main.py ... \
+  --parameters ../../../source_model/R7_SIMLE/R7_ROBUSTNESS/parameters.json \
+  --thrust-curve ../../../source_model/R7_SIMLE/R7_OUTPUT/thrust_source.csv
+```
