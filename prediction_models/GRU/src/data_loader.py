@@ -5,13 +5,60 @@ import numpy as np
 import pandas as pd
 import torch
 
+SENSOR_COLUMNS = [
+    "Best_Acc_X",
+    "Best_Acc_Y",
+    "Best_Acc_Z",
+    "Best_AngVel_X",
+    "Best_AngVel_Y",
+    "Best_AngVel_Z",
+    "Barometer_Value",
+    "Sensor_Value",
+]
+
+CONDITION_COLUMNS = [
+    "Scenario_Oxidizer_Fraction",
+    "Scenario_Pressure_Scale",
+    "Scenario_Rocket_Mass_Scale",
+]
+
+CONDITION_ALIASES = {
+    "Scenario_Oxidizer_Fraction": "Scenario_Propellant_Fraction",
+}
+
+INPUT_COLUMNS = SENSOR_COLUMNS + CONDITION_COLUMNS
+
+
+def ensure_condition_columns(flight_data, source="flight data"):
+    """Populate nominal conditions and reject ambiguous legacy randomization data."""
+    oxidizer_column = CONDITION_COLUMNS[0]
+    legacy_column = CONDITION_ALIASES[oxidizer_column]
+    if oxidizer_column not in flight_data.columns:
+        if legacy_column in flight_data.columns:
+            legacy_values = flight_data[legacy_column].to_numpy(dtype=np.float32)
+            if not np.allclose(legacy_values, 1.0):
+                raise ValueError(
+                    f"{source} contains variable {legacy_column} but no {oxidizer_column}. "
+                    "This is a legacy generic-propellant dataset and cannot be used as "
+                    "oxidizer-aware training data; regenerate it with "
+                    "robustness_oxidizer_40_100.json."
+                )
+            flight_data[oxidizer_column] = legacy_values
+        else:
+            flight_data[oxidizer_column] = 1.0
+
+    for column in CONDITION_COLUMNS[1:]:
+        if column not in flight_data.columns:
+            flight_data[column] = 1.0
+    return flight_data
+
 
 def read_flight_data(start_flight, num_of_flights, output_dir="../../../1955-1959", downsample=1):
     """
     Loads telemetry and simulation data from Parquet files.
 
-    Separates the data into input features (sensors) and target features (accelerations)
-    for the sequence-to-sequence model, along with raw positions and times for physics integration.
+    Separates input features (sensors plus scenario conditions), target accelerations,
+    raw scenario conditions, positions, and times for physics integration.
 
     Args:
         start_flight (int): Index of the first flight file to load.
@@ -19,10 +66,12 @@ def read_flight_data(start_flight, num_of_flights, output_dir="../../../1955-195
         output_dir (str): Relative or absolute path to the directory containing .parquet files.
 
     Returns:
-        tuple: Four lists of numpy arrays containing inputs, targets, positions, and timestamps.
+        tuple: Lists of numpy arrays containing inputs, raw conditions, targets, positions,
+            and timestamps.
     """
 
     flights_inputs = []
+    flights_conditions = []
     flights_targets = []
     flight_positions = []
     flight_times = []
@@ -41,19 +90,11 @@ def read_flight_data(start_flight, num_of_flights, output_dir="../../../1955-195
     for file_path in flight_files[start_flight : start_flight + num_of_flights]:
         flight_data = pd.read_parquet(file_path)
 
-        sensor_columns = [
-            "Best_Acc_X",
-            "Best_Acc_Y",
-            "Best_Acc_Z",
-            "Best_AngVel_X",
-            "Best_AngVel_Y",
-            "Best_AngVel_Z",
-            "Barometer_Value",
-            "Sensor_Value",
-        ]
-        if not set(sensor_columns).issubset(flight_data.columns):
-            raise ValueError(f"{file_path} is missing required sensor columns: {sensor_columns}")
-        input_data = flight_data[sensor_columns].values.astype(np.float32)[::downsample]
+        if not set(SENSOR_COLUMNS).issubset(flight_data.columns):
+            raise ValueError(f"{file_path} is missing required sensor columns: {SENSOR_COLUMNS}")
+        ensure_condition_columns(flight_data, file_path)
+        input_data = flight_data[INPUT_COLUMNS].values.astype(np.float32)[::downsample]
+        condition_data = flight_data[CONDITION_COLUMNS].values.astype(np.float32)[::downsample]
 
         target_columns = ["Acceleration_X", "Acceleration_Y", "Acceleration_Z"]
         target_data = flight_data[target_columns].values.astype(np.float32)[::downsample]
@@ -67,11 +108,12 @@ def read_flight_data(start_flight, num_of_flights, output_dir="../../../1955-195
             time_data = flight_data.index.to_numpy(dtype=np.float32)[::downsample]
 
         flights_inputs.append(input_data)
+        flights_conditions.append(condition_data)
         flights_targets.append(target_data)
         flight_positions.append(position_data)
         flight_times.append(time_data)
 
-    return flights_inputs, flights_targets, flight_positions, flight_times
+    return flights_inputs, flights_conditions, flights_targets, flight_positions, flight_times
 
 
 def split_flights(flights, split_ratio=0.8, seed=41):
@@ -151,7 +193,13 @@ def estimate_velocity(positions, times):
 
 
 def make_sequences(
-    flights_inputs, flights_targets, flight_positions, flight_times, seq_len, pred_len
+    flights_inputs,
+    flights_conditions,
+    flights_targets,
+    flight_positions,
+    flight_times,
+    seq_len,
+    pred_len,
 ):
     """
     Converts full-flight time-series data into overlapping training sequences for the GRU model.
@@ -160,7 +208,8 @@ def make_sequences(
     prediction window (Cut-Off).
 
     Args:
-        flights_inputs (list of np.ndarray): Sensor input data (e.g., Barometer, IMU).
+        flights_inputs (list of np.ndarray): Model input data, including sensors and scenario columns.
+        flights_conditions (list of np.ndarray): Raw scenario columns for conditioned RK4 calls.
         flights_targets (list of np.ndarray): Target true accelerations from the simulator.
         flight_positions (list of np.ndarray): True physical positions (X, Y, Z).
         flight_times (list of np.ndarray): Timestamps for the telemetry data.
@@ -171,7 +220,8 @@ def make_sequences(
         tuple: PyTorch tensors for X (inputs), y_acc (target accelerations), y_pos (target positions),
             t_y (target times), and initial integration conditions (pos, vel, time).
     """
-    X, y_hist_acc, y_acc, y_pos, t_y, initial_pos, initial_vel, initial_time = (
+    X, condition_context, y_hist_acc, y_acc, y_pos, t_y, initial_pos, initial_vel, initial_time = (
+        [],
         [],
         [],
         [],
@@ -183,8 +233,8 @@ def make_sequences(
     )
 
     # iterate simultaneously over inputs and targets
-    for f_in, f_tar, positions, times in zip(
-        flights_inputs, flights_targets, flight_positions, flight_times, strict=False
+    for f_in, f_cond, f_tar, positions, times in zip(
+        flights_inputs, flights_conditions, flights_targets, flight_positions, flight_times, strict=False
     ):
         velocities = estimate_velocity(positions, times)
 
@@ -193,8 +243,9 @@ def make_sequences(
             target_start_idx = i + seq_len
             target_end_idx = target_start_idx + pred_len
 
-            # Extract seq_len values from past observations   (Sensors - 8 columns)
+            # Extract seq_len values from past observations.
             X.append(f_in[i : i + seq_len])
+            condition_context.append(f_cond[start_idx])
 
             # Keep the matching past true accelerations for visualization only.
             y_hist_acc.append(f_tar[i : i + seq_len])
@@ -211,6 +262,7 @@ def make_sequences(
 
     # convert to numpy arrays
     X = np.array(X, dtype=np.float32)
+    condition_context = np.array(condition_context, dtype=np.float32)
     y_hist_acc = np.array(y_hist_acc, dtype=np.float32)
     y_acc = np.array(y_acc, dtype=np.float32)
     y_pos = np.array(y_pos, dtype=np.float32)
@@ -222,6 +274,7 @@ def make_sequences(
     # convert to tensors (required for model training)
     return (
         torch.from_numpy(X),
+        torch.from_numpy(condition_context),
         torch.from_numpy(y_hist_acc),
         torch.from_numpy(y_acc),
         torch.from_numpy(y_pos),

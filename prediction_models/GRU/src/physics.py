@@ -1,3 +1,4 @@
+import copy
 import json
 import sys
 from pathlib import Path
@@ -22,6 +23,7 @@ G0 = 9.80665
 
 # cache for RK4 baseline calculations to prevent redundant numerical integration
 _RK4_CACHE = {}
+DEFAULT_CONDITIONS = np.array([1.0, 1.0, 1.0], dtype=np.float32)
 
 
 def load_parameters(parameters_path):
@@ -131,6 +133,130 @@ def _get_rk4_tables(parameters, thrust_curve, sampling_rate):
     return _RK4_CACHE[cache_key]
 
 
+def _conditioned_physics(parameters, thrust_curve, condition):
+    """Return parameters and thrust adjusted by launch-condition inputs.
+
+    condition order:
+    0. oxidizer fraction,
+    1. pressure/thrust scale,
+    2. rocket mass scale.
+    """
+    oxidizer_fraction, pressure_scale, rocket_mass_scale = [
+        float(value) for value in condition
+    ]
+    if not 0.0 < oxidizer_fraction <= 1.0:
+        raise ValueError(f"oxidizer fraction must be in (0, 1], got {oxidizer_fraction}")
+    if pressure_scale <= 0.0 or rocket_mass_scale <= 0.0:
+        raise ValueError("pressure and rocket-mass scales must be positive")
+
+    conditioned_parameters = copy.deepcopy(parameters)
+    rocket = conditioned_parameters.setdefault("rocket", {})
+    motors = conditioned_parameters.setdefault("motors", {})
+
+    base_rocket_mass = float(rocket.get("mass", 50.876))
+    base_fuel_mass = float(motors.get("fuel_mass", DEFAULT_FUEL_MASS))
+    nominal_oxidizer_mass = motors.get("nominal_oxidizer_mass_kg")
+    fixed_fuel_mass = motors.get("fixed_fuel_mass_kg")
+
+    rocket["mass"] = base_rocket_mass * rocket_mass_scale
+    if "inertia" in rocket:
+        rocket["inertia"] = [float(value) * rocket_mass_scale for value in rocket["inertia"]]
+
+    conditioned_thrust = np.asarray(thrust_curve, dtype=np.float32).copy()
+    if nominal_oxidizer_mass is not None and fixed_fuel_mass is not None:
+        nominal_oxidizer_mass = float(nominal_oxidizer_mass)
+        fixed_fuel_mass = float(fixed_fuel_mass)
+        configured_fuel_mass = nominal_oxidizer_mass + fixed_fuel_mass
+        if not np.isclose(configured_fuel_mass, base_fuel_mass, rtol=0.02):
+            raise ValueError(
+                "conditioned RK4 motor masses do not match: "
+                f"configured={configured_fuel_mass}, fuel_mass={base_fuel_mass}"
+            )
+
+        motors["fuel_mass"] = base_fuel_mass * oxidizer_fraction
+        rocket["mass"] += fixed_fuel_mass * (1.0 - oxidizer_fraction)
+        burn_time_exponent = float(motors.get("oxidizer_burn_time_exponent", 1.0))
+        burn_time_scale = oxidizer_fraction**burn_time_exponent
+        start_time = conditioned_thrust[0, 0]
+        conditioned_thrust[:, 0] = start_time + (
+            conditioned_thrust[:, 0] - start_time
+        ) * burn_time_scale
+        motors["isp"] = float(motors.get("isp", DEFAULT_ISP)) * pressure_scale
+    else:
+        # Compatibility with parameters used by the earlier generic
+        # propellant-fraction datasets.
+        motors["fuel_mass"] = base_fuel_mass * oxidizer_fraction
+
+    if "grain_initial_height" in motors:
+        motors["grain_initial_height"] = (
+            float(motors["grain_initial_height"]) * oxidizer_fraction
+        )
+
+    conditioned_thrust[:, 1] *= pressure_scale
+    return conditioned_parameters, conditioned_thrust
+
+
+def _condition_groups(condition_array):
+    """Yield each condition and its row indices without repeatedly scanning the array."""
+    rounded = np.round(condition_array.astype(np.float32), 6)
+    unique, inverse = np.unique(rounded, axis=0, return_inverse=True)
+    order = np.argsort(inverse, kind="stable")
+    offsets = np.concatenate(([0], np.cumsum(np.bincount(inverse, minlength=len(unique)))))
+    for index, condition in enumerate(unique):
+        yield condition, order[offsets[index] : offsets[index + 1]]
+
+
+def calculate_x_b_conditioned(times, parameters, thrust_curve, sampling_rate, conditions=None):
+    """Return RK4 baseline acceleration using optional per-row scenario conditions."""
+    if conditions is None:
+        return calculate_x_b(times, parameters, thrust_curve, sampling_rate)
+
+    if not torch.is_tensor(times):
+        times_tensor = torch.as_tensor(times, dtype=torch.float32)
+    else:
+        times_tensor = times
+    times_np = times_tensor.detach().cpu().numpy()
+    if torch.is_tensor(conditions):
+        conditions_np = conditions.detach().cpu().numpy().astype(np.float32, copy=False)
+    else:
+        conditions_np = np.asarray(conditions, dtype=np.float32)
+
+    if conditions_np.ndim == 1:
+        conditioned_parameters, conditioned_thrust = _conditioned_physics(
+            parameters, thrust_curve, conditions_np
+        )
+        return calculate_x_b(times_tensor, conditioned_parameters, conditioned_thrust, sampling_rate)
+
+    if conditions_np.shape[:-1] == times_np.shape and conditions_np.shape[-1] == 3:
+        flat_times = times_np.reshape(-1)
+        flat_conditions = conditions_np.reshape(-1, 3)
+        output = np.empty((flat_times.shape[0], 3), dtype=np.float32)
+        for condition, indices in _condition_groups(flat_conditions):
+            conditioned_parameters, conditioned_thrust = _conditioned_physics(
+                parameters, thrust_curve, condition
+            )
+            output[indices] = calculate_x_b(
+                flat_times[indices], conditioned_parameters, conditioned_thrust, sampling_rate
+            )
+        return output.reshape((*times_np.shape, 3))
+
+    if conditions_np.ndim == 2 and conditions_np.shape[0] == times_np.shape[0]:
+        output = np.empty((*times_np.shape, 3), dtype=np.float32)
+        for condition, indices in _condition_groups(conditions_np):
+            conditioned_parameters, conditioned_thrust = _conditioned_physics(
+                parameters, thrust_curve, condition
+            )
+            output[indices] = calculate_x_b(
+                times_np[indices], conditioned_parameters, conditioned_thrust, sampling_rate
+            )
+        return output
+
+    raise ValueError(
+        "conditions must have shape (3,), (N, 3), or times.shape + (3,), "
+        f"got conditions={conditions_np.shape}, times={times_np.shape}"
+    )
+
+
 def calculate_x_b(times, parameters, thrust_curve, sampling_rate):
     """Return base acceleration x_b(t) from the RK4 baseline model.
 
@@ -223,7 +349,7 @@ class BaseAccelerationMSELoss(nn.Module):
         self.sampling_rate = sampling_rate
         self.model_type = model_type
 
-    def forward(self, predicted_x_s, true_x_total, times):
+    def forward(self, predicted_x_s, true_x_total, times, conditions=None):
         if self.model_type == "gru":    # just gru
             true_target = true_x_total[:, :, :3]
         else:                           # residual gru
@@ -233,13 +359,14 @@ class BaseAccelerationMSELoss(nn.Module):
                 self.parameters,
                 self.thrust_curve,
                 self.sampling_rate,
+                conditions,
             )
         return self.mse(predicted_x_s, true_target)
 
 
-def calculate_residual_target(true_x_total, times, parameters, thrust_curve, sampling_rate):
+def calculate_residual_target(true_x_total, times, parameters, thrust_curve, sampling_rate, conditions=None):
     """Return the residual target learned by GRU: x_s = x_total - x_b."""
-    x_b_numpy = calculate_x_b(times, parameters, thrust_curve, sampling_rate)
+    x_b_numpy = calculate_x_b_conditioned(times, parameters, thrust_curve, sampling_rate, conditions)
     x_b = torch.as_tensor(x_b_numpy, dtype=true_x_total.dtype, device=true_x_total.device)
     return true_x_total[:, :, :3] - x_b
 
@@ -298,9 +425,12 @@ class PINNPositionMSELoss(nn.Module):
         initial_position,
         initial_velocity,
         initial_time,
+        conditions=None,
     ):
         if self.model_type in ["gru_res", "gru_res_phys"]:
-            x_b_numpy = calculate_x_b(times, self.parameters, self.thrust_curve, self.sampling_rate)
+            x_b_numpy = calculate_x_b_conditioned(
+                times, self.parameters, self.thrust_curve, self.sampling_rate, conditions
+            )
             x_b = torch.as_tensor(x_b_numpy, dtype=predicted_x_s.dtype, device=predicted_x_s.device)
             predicted_x_total = predicted_x_s + x_b
         else:
@@ -359,6 +489,7 @@ class TotalLoss(nn.Module):
         initial_pos_batch,
         initial_vel_batch,
         initial_time_batch,
+        condition_batch=None,
     ):
         device = preds.device
 
@@ -380,9 +511,12 @@ class TotalLoss(nn.Module):
             denorm_initial_pos,
             denorm_initial_vel,
             initial_time_batch,
+            condition_batch,
         )
 
-        mse_acc = self.acc_loss(denormalized_preds, denormalized_acc_target, t_batch)
+        mse_acc = self.acc_loss(
+            denormalized_preds, denormalized_acc_target, t_batch, condition_batch
+        )
 
         physics_accounted = bool(self.model_type == "gru_res_phys" or self.model_type == "gru_phys")
 
@@ -392,6 +526,9 @@ def default_physics_paths():
     """Retrieves absolute paths for default physics configurations."""
 
     root = Path(__file__).resolve().parents[3]
-    model_root = root / "source_model" / "R7_SIMLE" / "R7_OUTPUT"
+    model_root = root / "source_model" / "R7_SIMLE"
 
-    return model_root / "parameters.json", model_root / "thrust_source.csv"
+    return (
+        model_root / "R7_ROBUSTNESS" / "parameters.json",
+        model_root / "R7_OUTPUT" / "thrust_source.csv",
+    )

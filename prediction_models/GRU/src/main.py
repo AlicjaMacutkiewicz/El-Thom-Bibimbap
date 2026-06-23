@@ -3,11 +3,11 @@ import argparse
 import numpy as np
 import torch
 import torch.optim as optim
-from data_loader import make_sequences, read_flight_data, split_flights
+from data_loader import INPUT_COLUMNS, make_sequences, read_flight_data, split_flights
 from GRU_model import GRU
 from physics import (
     TotalLoss,
-    calculate_x_b,
+    calculate_x_b_conditioned,
     default_physics_paths,
     load_parameters,
     load_thrust_curve,
@@ -80,7 +80,7 @@ def main():
     thrust_curve = load_thrust_curve(thrust_curve_path)
 
     # load flight data
-    flights_inputs, flights_targets, flight_positions, flight_times = read_flight_data(
+    flights_inputs, flights_conditions, flights_targets, flight_positions, flight_times = read_flight_data(
         args.start_flight,
         args.num_flights,
         output_dir=args.output_dir,
@@ -89,6 +89,7 @@ def main():
 
     # train / test data split
     train_inputs, test_inputs = split_flights(flights_inputs)
+    train_conditions, test_conditions = split_flights(flights_conditions)
     train_targets, test_targets = split_flights(flights_targets)
     train_positions, test_positions = split_flights(flight_positions)
     train_times, test_times = split_flights(flight_times)
@@ -112,9 +113,18 @@ def main():
 
     # residual stats — what the GRU actually predicts: x_s = x_total - x_b
     # must be computed on raw targets before normalizing, using raw times
-    all_train_times = np.concatenate(train_times, axis=0)
-    x_b_train = calculate_x_b(
-        torch.from_numpy(all_train_times), parameters, thrust_curve, sampling_rate
+    x_b_train = np.concatenate(
+        [
+            calculate_x_b_conditioned(
+                torch.from_numpy(times),
+                parameters,
+                thrust_curve,
+                sampling_rate,
+                conditions,
+            )
+            for times, conditions in zip(train_times, train_conditions, strict=True)
+        ],
+        axis=0,
     )
     all_train_targets_raw = np.concatenate(train_targets, axis=0)
     x_s_train = all_train_targets_raw - x_b_train
@@ -151,6 +161,7 @@ def main():
 
     (
         X_train,
+        condition_train,
         y_hist_train,
         y_train,
         pos_train,
@@ -159,10 +170,17 @@ def main():
         initial_vel_train,
         initial_time_train,
     ) = make_sequences(
-        train_inputs, train_targets, train_positions, train_times, args.seq_len, pred_len
+        train_inputs,
+        train_conditions,
+        train_targets,
+        train_positions,
+        train_times,
+        args.seq_len,
+        pred_len,
     )
     (
         X_test,
+        condition_test,
         y_hist_test,
         y_test,
         pos_test,
@@ -171,13 +189,21 @@ def main():
         initial_vel_test,
         initial_time_test,
     ) = make_sequences(
-        test_inputs, test_targets, test_positions, test_times, args.seq_len, pred_len
+        test_inputs,
+        test_conditions,
+        test_targets,
+        test_positions,
+        test_times,
+        args.seq_len,
+        pred_len,
     )
 
     print("data preprocessing and sequence generation complete")
+    print(f"model input columns ({len(INPUT_COLUMNS)}): {INPUT_COLUMNS}")
 
     (
         X_train,
+        condition_train,
         y_hist_train,
         y_train,
         pos_train,
@@ -188,6 +214,7 @@ def main():
     ) = drop_last(
         [
             X_train,
+            condition_train,
             y_hist_train,
             y_train,
             pos_train,
@@ -201,6 +228,7 @@ def main():
 
     (
         X_test,
+        condition_test,
         y_hist_test,
         y_test,
         pos_test,
@@ -211,6 +239,7 @@ def main():
     ) = drop_last(
         [
             X_test,
+            condition_test,
             y_hist_test,
             y_test,
             pos_test,
@@ -223,7 +252,7 @@ def main():
     )
 
     # model init and training
-    model = GRU(input_size=8, hidden_size=64, output_size=3, num_layers=2, dropout=0.2)
+    model = GRU(input_size=X_train.shape[-1], hidden_size=64, output_size=3, num_layers=2, dropout=0.2)
 
     if args.resume_from:
         print(f"resuming training from checkpoint: {args.resume_from}")
@@ -248,6 +277,7 @@ def main():
     train_losses, test_losses = train_model(
         model,
         X_train,
+        condition_train,
         y_train,
         pos_train,
         t_train,
@@ -255,6 +285,7 @@ def main():
         initial_vel_train,
         initial_time_train,
         X_test,
+        condition_test,
         y_test,
         pos_test,
         t_test,
@@ -310,6 +341,7 @@ def main():
             device,
             sampling_rate=sampling_rate,
             sample_idx=sample_idx,
+            condition_test=condition_test,
         )
 
 

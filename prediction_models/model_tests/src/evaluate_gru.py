@@ -37,6 +37,15 @@ SENSOR_COLUMNS = [
     "Barometer_Value",
     "Sensor_Value",
 ]
+CONDITION_COLUMNS = [
+    "Scenario_Oxidizer_Fraction",
+    "Scenario_Pressure_Scale",
+    "Scenario_Rocket_Mass_Scale",
+]
+CONDITION_ALIASES = {
+    "Scenario_Oxidizer_Fraction": "Scenario_Propellant_Fraction",
+}
+INPUT_COLUMNS = SENSOR_COLUMNS + CONDITION_COLUMNS
 TARGET_COLUMNS = ["Acceleration_X", "Acceleration_Y", "Acceleration_Z"]
 POSITION_COLUMNS = ["Position_X", "Position_Y", "Position_Z"]
 PLAIN_GRU_METHOD = "Plain GRU"
@@ -111,7 +120,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Rocket parameters JSON for the RK4 baseline. Defaults to "
-            "source_model/R7_SIMLE/R7_OUTPUT/parameters.json."
+            "source_model/R7_SIMLE/R7_ROBUSTNESS/parameters.json."
         ),
     )
     parser.add_argument(
@@ -226,20 +235,39 @@ def find_eval_files(directory: Path) -> list[Path]:
     return files
 
 
-def read_flight(path: Path, downsample: int) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def read_flight(
+    path: Path, downsample: int
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     data = pd.read_parquet(path)
     required = set(SENSOR_COLUMNS + TARGET_COLUMNS + POSITION_COLUMNS)
     missing = sorted(required.difference(data.columns))
     if missing:
         raise ValueError(f"missing columns: {missing}")
-    inputs = data[SENSOR_COLUMNS].to_numpy(dtype=np.float32)[::downsample]
+    oxidizer_column = CONDITION_COLUMNS[0]
+    legacy_column = CONDITION_ALIASES[oxidizer_column]
+    if oxidizer_column not in data.columns:
+        if legacy_column in data.columns:
+            legacy_values = data[legacy_column].to_numpy(dtype=np.float32)
+            if not np.allclose(legacy_values, 1.0):
+                raise ValueError(
+                    f"legacy variable {legacy_column} cannot be interpreted as "
+                    f"{oxidizer_column}; regenerate this dataset with the oxidizer-aware scenario"
+                )
+            data[oxidizer_column] = legacy_values
+        else:
+            data[oxidizer_column] = 1.0
+    for column in CONDITION_COLUMNS[1:]:
+        if column not in data.columns:
+            data[column] = 1.0
+    inputs = data[INPUT_COLUMNS].to_numpy(dtype=np.float32)[::downsample]
+    conditions = data[CONDITION_COLUMNS].to_numpy(dtype=np.float32)[::downsample]
     targets = data[TARGET_COLUMNS].to_numpy(dtype=np.float32)[::downsample]
     positions = data[POSITION_COLUMNS].to_numpy(dtype=np.float32)[::downsample]
     if "Time" in data.columns:
         times = data["Time"].to_numpy(dtype=np.float32)[::downsample]
     else:
         times = data.index.to_numpy(dtype=np.float32)[::downsample]
-    return inputs, targets, positions, times
+    return inputs, conditions, targets, positions, times
 
 
 def to_numpy(value: object) -> np.ndarray:
@@ -388,9 +416,13 @@ def configure_imports(repo: Path):
     sys.path.insert(0, str(classical_src))
     sys.path.insert(0, str(gru_src))
     from GRU_model import GRU  # type: ignore
-    from physics import calculate_x_b, load_parameters, load_thrust_curve  # type: ignore
+    from physics import (  # type: ignore
+        calculate_x_b_conditioned,
+        load_parameters,
+        load_thrust_curve,
+    )
 
-    return GRU, calculate_x_b, load_parameters, load_thrust_curve
+    return GRU, calculate_x_b_conditioned, load_parameters, load_thrust_curve
 
 
 def select_device(args: argparse.Namespace) -> tuple[torch.device, list[int]]:
@@ -419,8 +451,12 @@ def select_device(args: argparse.Namespace) -> tuple[torch.device, list[int]]:
     return torch.device("cpu"), []
 
 
-def baseline_acceleration(calculate_x_b, times, parameters, thrust_curve, rate: float) -> np.ndarray:
-    output = calculate_x_b(torch.from_numpy(times.astype(np.float32)), parameters, thrust_curve, rate)
+def baseline_acceleration(
+    calculate_x_b, times, parameters, thrust_curve, rate: float, conditions=None
+) -> np.ndarray:
+    output = calculate_x_b(
+        torch.from_numpy(times.astype(np.float32)), parameters, thrust_curve, rate, conditions
+    )
     return to_numpy(output).astype(np.float32, copy=False)
 
 
@@ -453,11 +489,11 @@ def compute_scalers(
     for progress, index in enumerate(train_indices, 1):
         path = selected[index]
         try:
-            inputs, targets, _positions, times = read_flight(path, args.downsample)
+            inputs, conditions, targets, _positions, times = read_flight(path, args.downsample)
         except Exception as exc:
             broken.append({"file": str(path), "error": f"{type(exc).__name__}: {exc}"})
             continue
-        base = baseline_acceleration(calculate_x_b, times, parameters, thrust_curve, rate)
+        base = baseline_acceleration(calculate_x_b, times, parameters, thrust_curve, rate, conditions)
         input_arrays.append(inputs)
         target_arrays.append(targets)
         residual_arrays.append(targets - base)
@@ -491,6 +527,8 @@ def compute_scalers(
         "broken_files": broken,
         "runtime_seconds": time.time() - scaler_start,
         "exact_expected_file_count_present": len(selected) == args.training_num_flights and not broken,
+        "input_columns": INPUT_COLUMNS,
+        "condition_columns": CONDITION_COLUMNS,
     }
     np.savez(
         args.output_dir / "reconstructed_scalers.npz",
@@ -512,10 +550,39 @@ def compute_scalers(
     return mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs, metadata
 
 
-def load_network(GRU, path: Path, device: torch.device, gpu_ids: list[int]):
-    model = GRU(input_size=8, hidden_size=64, output_size=3, num_layers=2, dropout=0.2)
+def _checkpoint_input_size(state: dict[str, torch.Tensor]) -> int | None:
+    # The project uses a custom GRUCell whose input matrices have shape
+    # (input_features + mode_flag, hidden_size). Keep support for a native
+    # torch.nn.GRU checkpoint as well.
+    weight = state.get("layers.0.W_r")
+    if weight is not None:
+        return int(weight.shape[0]) - 1
+    weight = state.get("gru.weight_ih_l0")
+    if weight is None:
+        return None
+    return int(weight.shape[1]) - 1
+
+
+def load_network(
+    GRU,
+    path_or_args,
+    device: torch.device,
+    gpu_ids: list[int],
+    input_size: int | None = None,
+):
+    path = Path(path_or_args) if isinstance(path_or_args, (str, Path)) else Path(path_or_args.model)
     state = torch.load(path, map_location="cpu")
     state = {key.removeprefix("module."): value for key, value in state.items()}
+    checkpoint_input_size = _checkpoint_input_size(state)
+    if input_size is None:
+        input_size = checkpoint_input_size or len(INPUT_COLUMNS)
+    if checkpoint_input_size is not None and checkpoint_input_size != input_size:
+        raise RuntimeError(
+            f"{path} expects {checkpoint_input_size} model input columns, but this evaluation "
+            f"was configured with {input_size}. Recreate scalers/evaluation data for the same "
+            "input schema as the checkpoint."
+        )
+    model = GRU(input_size=input_size, hidden_size=64, output_size=3, num_layers=2, dropout=0.2)
     model.load_state_dict(state)
     model.eval()
     model.to(device)
@@ -527,12 +594,16 @@ def load_network(GRU, path: Path, device: torch.device, gpu_ids: list[int]):
 
 
 def load_networks(
-    GRU, model_specs: list[ModelSpec], device: torch.device, gpu_ids: list[int]
+    GRU,
+    model_specs: list[ModelSpec],
+    device: torch.device,
+    gpu_ids: list[int],
+    input_size: int | None = None,
 ) -> dict[str, torch.nn.Module]:
     models = {}
     for spec in model_specs:
         log(f"Loading {spec.name} from {spec.path}")
-        models[spec.name] = load_network(GRU, spec.path, device, gpu_ids)
+        models[spec.name] = load_network(GRU, spec.path, device, gpu_ids, input_size)
     return models
 
 
@@ -743,7 +814,7 @@ def evaluate(
     start_time = time.time()
     for sequence, path in enumerate(files, 1):
         try:
-            inputs, targets, positions, times = read_flight(path, args.downsample)
+            inputs, conditions, targets, positions, times = read_flight(path, args.downsample)
         except Exception as exc:
             skipped.append({"file": str(path), "error": f"{type(exc).__name__}: {exc}"})
             log(f"SKIP unreadable file {path.name}: {type(exc).__name__}: {exc}")
@@ -753,10 +824,13 @@ def evaluate(
             skipped.append({"file": str(path), "error": "insufficient samples after downsampling"})
             continue
         input_windows = np.stack([inputs[i - args.seq_len : i] for i in starts])
+        condition_context = conditions[starts - 1]
         future_times = np.stack([times[i : i + args.pred_len] for i in starts])
         actual_acc = np.stack([targets[i : i + args.pred_len] for i in starts])
         actual_position = np.stack([positions[i : i + args.pred_len] for i in starts])
-        base_acc = baseline_acceleration(calculate_x_b, future_times, parameters, thrust_curve, rate)
+        base_acc = baseline_acceleration(
+            calculate_x_b, future_times, parameters, thrust_curve, rate, condition_context
+        )
         model_accelerations = predict_model_accelerations(
             model_specs,
             models,
@@ -877,6 +951,8 @@ def evaluate(
         "skipped_files": skipped,
         "windows_evaluated": total_windows,
         "threshold_m": args.threshold,
+        "input_columns": INPUT_COLUMNS,
+        "condition_columns": CONDITION_COLUMNS,
         "runtime_seconds": time.time() - start_time,
         "device": str(device),
         "cuda_devices_used": list(range(torch.cuda.device_count()))
@@ -942,13 +1018,13 @@ def evaluate_landing_horizons(
     files = find_eval_files(args.eval_data_dir)
     if args.max_eval_flights:
         files = files[: args.max_eval_flights]
-    usable: list[tuple[Path, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+    usable: list[tuple[Path, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
     for path in files:
         try:
-            inputs, targets, positions, times = read_flight(path, args.downsample)
+            inputs, conditions, targets, positions, times = read_flight(path, args.downsample)
         except Exception:
             continue
-        usable.append((path, inputs, targets, positions, times))
+        usable.append((path, inputs, conditions, targets, positions, times))
     reports: dict[str, dict] = {}
     rows: list[dict] = []
     methods = method_order(model_specs)
@@ -963,11 +1039,12 @@ def evaluate_landing_horizons(
         initial_velocities = []
         initial_times = []
         previous_accelerations = []
+        condition_contexts = []
         lookback_times = []
         lookback_positions = []
         names = []
         lead_seconds = []
-        for path, inputs, targets, positions, times in usable:
+        for path, inputs, conditions, targets, positions, times in usable:
             start = len(times) - horizon
             if start < args.seq_len or start < 2:
                 continue
@@ -982,6 +1059,7 @@ def evaluate_landing_horizons(
             initial_velocities.append((positions[previous] - positions[before_previous]) / dt)
             initial_times.append(times[previous])
             previous_accelerations.append(targets[previous])
+            condition_contexts.append(conditions[previous])
             lookback_times.append(times[start - args.seq_len : start])
             lookback_positions.append(positions[start - args.seq_len : start])
             names.append(path.name)
@@ -996,7 +1074,10 @@ def evaluate_landing_horizons(
         initial_pos_array = np.stack(initial_positions)
         initial_vel_array = np.stack(initial_velocities)
         initial_time_array = np.asarray(initial_times, dtype=np.float32)
-        base = baseline_acceleration(calculate_x_b, time_array, parameters, thrust_curve, rate)
+        condition_context_array = np.stack(condition_contexts)
+        base = baseline_acceleration(
+            calculate_x_b, time_array, parameters, thrust_curve, rate, condition_context_array
+        )
         model_accelerations = predict_model_accelerations(
             model_specs,
             models,
@@ -1475,9 +1556,11 @@ def main() -> int:
     for spec in model_specs:
         log(f"  {spec.name}: {spec.path} ({spec.output_mode})")
     GRU, calculate_x_b, load_parameters, load_thrust_curve = configure_imports(args.repo)
-    config_root = args.repo / "source_model" / "R7_SIMLE" / "R7_OUTPUT"
-    parameters_path = args.parameters or config_root / "parameters.json"
-    thrust_curve_path = args.thrust_curve or config_root / "thrust_source.csv"
+    model_root = args.repo / "source_model" / "R7_SIMLE"
+    parameters_path = (
+        args.parameters or model_root / "R7_ROBUSTNESS" / "parameters.json"
+    )
+    thrust_curve_path = args.thrust_curve or model_root / "R7_OUTPUT" / "thrust_source.csv"
     args.parameters_path_used = parameters_path
     args.thrust_curve_path_used = thrust_curve_path
     log(f"RK4 parameters: {parameters_path}")
@@ -1489,7 +1572,7 @@ def main() -> int:
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs, scaler_meta = compute_scalers(
         args, calculate_x_b, parameters, thrust_curve, sampling_rate
     )
-    models = load_networks(GRU, model_specs, device, gpu_ids)
+    models = load_networks(GRU, model_specs, device, gpu_ids, input_size=len(mean_in))
     summary, rows, worst, illustrative = evaluate(
         args,
         model_specs,

@@ -1,7 +1,11 @@
+import matplotlib
 import numpy as np
 import torch
+
+matplotlib.use("Agg")
 from matplotlib import pyplot as plt
-from physics import calculate_x_b
+
+from physics import calculate_x_b_conditioned
 
 
 def _axis_metrics(prediction, target, axis):
@@ -37,6 +41,7 @@ def plot_prediction(
     sample_idx=0,
     axis=0,
     filename_prefix="prediction_sample",
+    condition_test=None,
 ):
     """
     Generates and saves a plot comparing the model's trajectory prediction against the ground truth.
@@ -67,6 +72,9 @@ def plot_prediction(
         input_seq = X_test[sample_idx : sample_idx + 1].to(device)
         target = y_test[sample_idx]
         target_times = t_test[sample_idx : sample_idx + 1].to(device)
+        condition = None
+        if condition_test is not None:
+            condition = condition_test[sample_idx : sample_idx + 1]
 
         # forward pass through the GRU to get the predicted residual (x_s)
         predicted_x_s, _ = model(input_seq, pred_len=pred_len)
@@ -79,9 +87,9 @@ def plot_prediction(
         history_denorm = y_hist_test[sample_idx].cpu().numpy() * std_acc + mean_acc
 
         # calculate and add the known physics baseline (x_b)
-        base_acc = (
-            calculate_x_b(target_times, parameters, thrust_curve, sampling_rate)[0]
-        )
+        base_acc = calculate_x_b_conditioned(
+            target_times, parameters, thrust_curve, sampling_rate, condition
+        )[0]
         prediction = predicted_x_s_denorm + base_acc
         rk4_baseline = base_acc
         last_value_baseline = np.repeat(history_denorm[-1:, :3], pred_len, axis=0)

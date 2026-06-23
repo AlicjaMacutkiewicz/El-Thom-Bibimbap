@@ -5,6 +5,7 @@ import wandb
 def train_model(
     model,
     X_train,
+    condition_train,
     y_train,
     pos_train,
     t_train,
@@ -12,6 +13,7 @@ def train_model(
     initial_vel_train,
     initial_time_train,
     X_test,
+    condition_test,
     y_test,
     pos_test,
     t_test,
@@ -76,6 +78,7 @@ def train_model(
         for i in range(0, len(X_train), batch_size):
             # Load batch slices to the active device
             X_batch = X_train[i : i + batch_size].to(device)
+            condition_batch = condition_train[i : i + batch_size].to(device)
             y_batch = y_train[i : i + batch_size].to(device)
             pos_batch = pos_train[i : i + batch_size].to(device)
             t_batch = t_train[i : i + batch_size].to(device)
@@ -96,6 +99,7 @@ def train_model(
                 initial_pos_batch,
                 initial_vel_batch,
                 initial_time_batch,
+                condition_batch,
             )
 
             # backpropagation
@@ -116,6 +120,7 @@ def train_model(
         avg_test_loss = evaluate_model(
             model,
             X_test,
+            condition_test,
             y_test,
             pos_test,
             t_test,
@@ -166,6 +171,7 @@ def train_model(
 def evaluate_model(
     model,
     X_test,
+    condition_test,
     y_test,
     pos_test,
     t_test,
@@ -199,6 +205,7 @@ def evaluate_model(
     with torch.no_grad():
         for i in range(0, len(X_test), batch_size):
             X_batch = X_test[i : i + batch_size].to(device)
+            condition_batch = condition_test[i : i + batch_size].to(device)
             y_batch = y_test[i : i + batch_size].to(device)
             pos_batch = pos_test[i : i + batch_size].to(device)
             t_batch = t_test[i : i + batch_size].to(device)
@@ -218,6 +225,7 @@ def evaluate_model(
                 initial_pos_batch,
                 initial_vel_batch,
                 initial_time_batch,
+                condition_batch,
             )
 
             batch_samples = len(X_batch)
