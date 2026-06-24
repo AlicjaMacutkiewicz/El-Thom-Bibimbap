@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Real-flight Z-axis replay for GRU ablation checkpoints.
+"""Real-flight replay for generalized GRU ablation checkpoints.
 
 This evaluator is intentionally scoped to the available FAR-OUT 2026 references:
 
 * model input uses real IMU/gyro/barometer/temperature telemetry,
 * acceleration is evaluated on the available vertical filtered acceleration,
 * position is evaluated on the available vertical altitude/height reference,
-* X/Y and full 3D trajectory accuracy are not evaluated.
+* X/Y forecast envelopes are illustrative only because no independent horizontal
+  ground-truth trajectory is available.
 
 The script compares the same three neural variants used in the synthetic
 ablation test:
@@ -42,13 +43,16 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from evaluate_gru import (  # noqa: E402  # type: ignore
+    CONDITION_COLUMNS,
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
+    INPUT_COLUMNS,
     PLAIN_GRU_METHOD,
     SENSOR_COLUMNS,
     ModelSpec,
     baseline_acceleration,
     configure_imports,
+    integrate_position,
     load_networks,
     predict_model_accelerations,
 )
@@ -56,6 +60,8 @@ from evaluate_gru import (  # noqa: E402  # type: ignore
 
 Z_POSITION_COLUMN = "Position_Z"
 Z_ACCELERATION_COLUMN = "Acceleration_Z"
+POSITION_COLUMNS = ["Position_X", "Position_Y", "Position_Z"]
+ACCELERATION_COLUMNS = ["Acceleration_X", "Acceleration_Y", "Acceleration_Z"]
 POSITION_METHODS = [
     PLAIN_GRU_METHOD,
     GRU_RK4_METHOD,
@@ -137,7 +143,7 @@ def log(message: str) -> None:
 def parse_args() -> argparse.Namespace:
     repo_default = Path.cwd()
     parser = argparse.ArgumentParser(
-        description="Evaluate non-retrained GRU ablation models on one real flight, Z axis only."
+        description="Evaluate generalized GRU ablation models on one real flight."
     )
     parser.add_argument("--repo", type=Path, default=repo_default)
     parser.add_argument(
@@ -170,12 +176,30 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Scaler file with mean_in/std_in/mean_acc/std_acc/mean_xs/std_xs. "
-            "Defaults to prediction_models/model_tests/gru_ablation_eval/reconstructed_scalers.npz."
+            "Defaults to ~/gru_ablation_eval_generalized/reconstructed_scalers.npz."
         ),
     )
     parser.add_argument("--parameters", type=Path, default=None)
     parser.add_argument("--thrust-curve", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
+    parser.add_argument(
+        "--oxidizer-fraction",
+        type=float,
+        required=True,
+        help="Launch oxidizer mass divided by the nominal oxidizer mass used by the model.",
+    )
+    parser.add_argument(
+        "--pressure-scale",
+        type=float,
+        required=True,
+        help="Launch-day chamber-pressure/thrust scale relative to nominal.",
+    )
+    parser.add_argument(
+        "--rocket-mass-scale",
+        type=float,
+        required=True,
+        help="Launch-day non-propellant rocket mass scale relative to the robustness baseline.",
+    )
     parser.add_argument("--downsample", type=int, default=4)
     parser.add_argument("--seq-len", type=int, default=100)
     parser.add_argument("--pred-len", type=int, default=100)
@@ -223,7 +247,7 @@ def resolve_paths(args: argparse.Namespace) -> None:
     args.repo = args.repo.expanduser().resolve()
     args.flight = args.flight.expanduser().resolve()
 
-    model_root = args.repo / "prediction_models" / "model_tests" / "final_model"
+    model_root = args.repo / "prediction_models" / "model_tests" / "final_model_generalized"
 
     def resolve_model_path(value: Path | None, default: Path) -> Path | None:
         if value is None:
@@ -233,38 +257,31 @@ def resolve_paths(args: argparse.Namespace) -> None:
         return value.expanduser().resolve()
 
     if args.gru_model is None:
-        args.gru_model = model_root / "gru_model.pth"
+        args.gru_model = model_root / "gru.pth"
     else:
-        args.gru_model = resolve_model_path(args.gru_model, model_root / "gru_model.pth")
+        args.gru_model = resolve_model_path(args.gru_model, model_root / "gru.pth")
     if args.gru_res_model is None:
-        args.gru_res_model = model_root / "gru_res_model.pth"
+        args.gru_res_model = model_root / "gru_res.pth"
     else:
-        args.gru_res_model = resolve_model_path(args.gru_res_model, model_root / "gru_res_model.pth")
+        args.gru_res_model = resolve_model_path(args.gru_res_model, model_root / "gru_res.pth")
     if args.gru_res_phys_model is None:
-        args.gru_res_phys_model = model_root / "gru_res_phys_model.pth"
+        args.gru_res_phys_model = model_root / "gru_res_phys.pth"
     else:
         args.gru_res_phys_model = resolve_model_path(
-            args.gru_res_phys_model, model_root / "gru_res_phys_model.pth"
+            args.gru_res_phys_model, model_root / "gru_res_phys.pth"
         )
 
     if args.scaler_npz is None:
-        args.scaler_npz = (
-            args.repo
-            / "prediction_models"
-            / "model_tests"
-            / "gru_ablation_eval"
-            / "reconstructed_scalers.npz"
-        )
+        args.scaler_npz = Path.home() / "gru_ablation_eval_generalized" / "reconstructed_scalers.npz"
     else:
         args.scaler_npz = args.scaler_npz.expanduser().resolve()
-
-    farout_root = args.repo / "source_model" / "R7_SIMLE" / "R7_FAROUT_26"
+    model_source_root = args.repo / "source_model" / "R7_SIMLE"
     if args.parameters is None:
-        args.parameters = farout_root / "parameters.json"
+        args.parameters = model_source_root / "R7_ROBUSTNESS" / "parameters.json"
     else:
         args.parameters = args.parameters.expanduser().resolve()
     if args.thrust_curve is None:
-        args.thrust_curve = farout_root / "thrust_source_pressure85.csv"
+        args.thrust_curve = model_source_root / "R7_OUTPUT" / "thrust_source.csv"
     else:
         args.thrust_curve = args.thrust_curve.expanduser().resolve()
 
@@ -274,6 +291,11 @@ def resolve_paths(args: argparse.Namespace) -> None:
     else:
         args.output_dir = args.output_dir.expanduser().resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not 0.0 < args.oxidizer_fraction <= 1.0:
+        raise ValueError("--oxidizer-fraction must be in (0, 1].")
+    if args.pressure_scale <= 0.0 or args.rocket_mass_scale <= 0.0:
+        raise ValueError("--pressure-scale and --rocket-mass-scale must be positive.")
 
 
 def parse_axis_map(text: str) -> list[tuple[int, float]]:
@@ -295,9 +317,11 @@ def apply_axis_map(values: np.ndarray, mapping: list[tuple[int, float]]) -> np.n
     return np.stack([sign * values[:, source] for source, sign in mapping], axis=1).astype(np.float32)
 
 
-def load_real_flight(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def load_real_flight(
+    args: argparse.Namespace,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     data = pd.read_parquet(args.flight)
-    required = set(SENSOR_COLUMNS + [Z_POSITION_COLUMN, Z_ACCELERATION_COLUMN])
+    required = set(SENSOR_COLUMNS + POSITION_COLUMNS + ACCELERATION_COLUMNS)
     missing = sorted(required.difference(data.columns))
     if missing:
         raise ValueError(f"{args.flight} is missing required columns: {missing}")
@@ -305,38 +329,46 @@ def load_real_flight(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray, 
     source_inputs = data[SENSOR_COLUMNS].to_numpy(dtype=np.float32)
     acc_map = parse_axis_map(args.acc_axis_map)
     gyro_map = parse_axis_map(args.gyro_axis_map)
-    inputs = np.empty_like(source_inputs, dtype=np.float32)
-    inputs[:, :3] = apply_axis_map(source_inputs[:, :3], acc_map)
-    inputs[:, 3:6] = apply_axis_map(source_inputs[:, 3:6], gyro_map)
-    inputs[:, 6:] = source_inputs[:, 6:]
+    mapped_sensors = np.empty_like(source_inputs, dtype=np.float32)
+    mapped_sensors[:, :3] = apply_axis_map(source_inputs[:, :3], acc_map)
+    mapped_sensors[:, 3:6] = apply_axis_map(source_inputs[:, 3:6], gyro_map)
+    mapped_sensors[:, 6:] = source_inputs[:, 6:]
+    condition = np.array(
+        [args.oxidizer_fraction, args.pressure_scale, args.rocket_mass_scale],
+        dtype=np.float32,
+    )
+    conditions = np.broadcast_to(condition, (len(mapped_sensors), len(condition))).copy()
+    inputs = np.concatenate([mapped_sensors, conditions], axis=1)
 
-    position_z = data[Z_POSITION_COLUMN].to_numpy(dtype=np.float32)
-    acceleration_z = data[Z_ACCELERATION_COLUMN].to_numpy(dtype=np.float32)
+    positions = data[POSITION_COLUMNS].to_numpy(dtype=np.float32)
+    accelerations = data[ACCELERATION_COLUMNS].to_numpy(dtype=np.float32)
     if "Time" in data.columns:
         times = data["Time"].to_numpy(dtype=np.float32)
     else:
         times = data.index.to_numpy(dtype=np.float32)
 
     inputs = inputs[:: args.downsample]
-    position_z = position_z[:: args.downsample]
-    acceleration_z = acceleration_z[:: args.downsample]
+    positions = positions[:: args.downsample]
+    accelerations = accelerations[:: args.downsample]
     times = times[:: args.downsample]
 
     order = np.argsort(times)
     inputs = inputs[order]
-    position_z = position_z[order]
-    acceleration_z = acceleration_z[order]
+    positions = positions[order]
+    accelerations = accelerations[order]
     times = times[order]
 
-    finite = np.isfinite(times) & np.isfinite(position_z) & np.isfinite(acceleration_z)
+    finite = np.isfinite(times)
     finite &= np.all(np.isfinite(inputs), axis=1)
-    return inputs[finite], position_z[finite], acceleration_z[finite], times[finite]
+    finite &= np.all(np.isfinite(positions), axis=1)
+    finite &= np.all(np.isfinite(accelerations), axis=1)
+    return inputs[finite], positions[finite], accelerations[finite], times[finite]
 
 
 def make_windows(
     inputs: np.ndarray,
-    position_z: np.ndarray,
-    acceleration_z: np.ndarray,
+    positions: np.ndarray,
+    accelerations: np.ndarray,
     times: np.ndarray,
     seq_len: int,
     pred_len: int,
@@ -362,14 +394,19 @@ def make_windows(
         "starts": starts,
         "input_windows": inputs[lookback],
         "lookback_times": times[lookback],
-        "lookback_position_z": position_z[lookback],
+        "lookback_position_z": positions[lookback, 2],
         "future_times": times[future],
-        "actual_position_z": position_z[future],
-        "actual_acceleration_z": acceleration_z[future],
-        "initial_position_z": position_z[previous],
-        "initial_velocity_z": (position_z[previous] - position_z[before_previous]) / dt,
+        "actual_positions": positions[future],
+        "actual_accelerations": accelerations[future],
+        "actual_position_z": positions[future, 2],
+        "actual_acceleration_z": accelerations[future, 2],
+        "initial_positions": positions[previous],
+        "initial_velocities": (positions[previous] - positions[before_previous]) / dt[:, None],
+        "initial_position_z": positions[previous, 2],
+        "initial_velocity_z": (positions[previous, 2] - positions[before_previous, 2]) / dt,
         "initial_time": times[previous],
-        "previous_acceleration_z": acceleration_z[previous],
+        "previous_acceleration_z": accelerations[previous, 2],
+        "condition_context": inputs[previous, -len(CONDITION_COLUMNS) :],
     }
 
 
@@ -432,6 +469,75 @@ def method_key(method: str) -> str:
     return "_".join(part for part in key.split("_") if part)
 
 
+def build_prediction_envelopes(
+    model_specs: list[ModelSpec],
+    model_positions: dict[str, np.ndarray],
+    windows: dict[str, np.ndarray],
+) -> list[dict[str, float | int | str]]:
+    """Summarize forecast spread by lead time across overlapping real-flight windows."""
+    lead_times = windows["future_times"] - windows["initial_time"][:, None]
+    median_leads = np.median(lead_times, axis=0)
+    rows: list[dict[str, float | int | str]] = []
+
+    for spec in model_specs:
+        prediction = model_positions[spec.name]
+        for axis_index, axis in enumerate(["X", "Y", "Z"]):
+            if axis == "Z":
+                values = prediction[:, :, axis_index] - windows["actual_positions"][:, :, axis_index]
+                quantity = "signed_error_vs_vertical_reference_m"
+            else:
+                values = (
+                    prediction[:, :, axis_index]
+                    - windows["initial_positions"][:, None, axis_index]
+                )
+                quantity = "predicted_displacement_from_cutoff_m"
+
+            zero = {
+                "method": spec.name,
+                "axis": axis,
+                "quantity": quantity,
+                "horizon_step": 0,
+                "lead_time_s": 0.0,
+                "minimum_m": 0.0,
+                "p05_m": 0.0,
+                "p25_m": 0.0,
+                "median_m": 0.0,
+                "p75_m": 0.0,
+                "p95_m": 0.0,
+                "maximum_m": 0.0,
+                "central_90_width_m": 0.0,
+                "max_abs_m": 0.0,
+                "rmse_m": 0.0,
+                "windows": int(values.shape[0]),
+            }
+            rows.append(zero)
+
+            for step in range(values.shape[1]):
+                current = values[:, step]
+                quantiles = np.quantile(current, [0.05, 0.25, 0.5, 0.75, 0.95])
+                rows.append(
+                    {
+                        "method": spec.name,
+                        "axis": axis,
+                        "quantity": quantity,
+                        "horizon_step": step + 1,
+                        "lead_time_s": float(median_leads[step]),
+                        "minimum_m": float(current.min()),
+                        "p05_m": float(quantiles[0]),
+                        "p25_m": float(quantiles[1]),
+                        "median_m": float(quantiles[2]),
+                        "p75_m": float(quantiles[3]),
+                        "p95_m": float(quantiles[4]),
+                        "maximum_m": float(current.max()),
+                        "central_90_width_m": float(quantiles[4] - quantiles[0]),
+                        "max_abs_m": float(np.abs(current).max()),
+                        "rmse_m": float(np.sqrt(np.mean(np.square(current)))),
+                        "windows": int(current.size),
+                    }
+                )
+    return rows
+
+
 def select_device(args: argparse.Namespace) -> tuple[torch.device, list[int]]:
     if args.device in {"auto", "cuda"} and torch.cuda.is_available():
         ids = [int(part.strip()) for part in args.gpu_ids.split(",") if part.strip()]
@@ -463,15 +569,21 @@ def load_scalers(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nda
             f"{path} is missing {missing}. The real-flight ablation evaluator needs the "
             "ablation scaler file with direct-acceleration and residual statistics."
         )
-    return tuple(scalers[key].astype(np.float32) for key in required)  # type: ignore[return-value]
+    values = tuple(scalers[key].astype(np.float32) for key in required)
+    if values[0].shape != (len(INPUT_COLUMNS),):
+        raise ValueError(
+            f"{path} has {values[0].size} input columns, but the generalized evaluation "
+            f"requires {len(INPUT_COLUMNS)}: {INPUT_COLUMNS}"
+        )
+    return values  # type: ignore[return-value]
 
 
-def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
+def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
     GRU, calculate_x_b, load_parameters, load_thrust_curve = configure_imports(args.repo)
     parameters = load_parameters(args.parameters)
     thrust_curve = load_thrust_curve(args.thrust_curve)
 
-    inputs, position_z, acceleration_z, times = load_real_flight(args)
+    inputs, positions, accelerations, times = load_real_flight(args)
     if len(times) < args.seq_len + args.pred_len + 2:
         raise RuntimeError(
             f"Not enough rows after downsampling: {len(times)} rows, "
@@ -507,12 +619,12 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
 
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs = load_scalers(args.scaler_npz)
     device, gpu_ids = select_device(args)
-    models = load_networks(GRU, model_specs, device, gpu_ids)
+    models = load_networks(GRU, model_specs, device, gpu_ids, input_size=len(mean_in))
 
     windows = make_windows(
         inputs,
-        position_z,
-        acceleration_z,
+        positions,
+        accelerations,
         times,
         args.seq_len,
         args.pred_len,
@@ -525,6 +637,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
         parameters,
         thrust_curve,
         sampling_rate,
+        windows["condition_context"],
     )
     model_acc_3d = predict_model_accelerations(
         model_specs,
@@ -566,6 +679,21 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
         windows["lookback_times"],
         windows["lookback_position_z"],
         windows["future_times"],
+    )
+    model_position_predictions_3d = {
+        spec.name: integrate_position(
+            model_acc_3d[spec.name],
+            windows["future_times"],
+            windows["initial_positions"],
+            windows["initial_velocities"],
+            windows["initial_time"],
+        )
+        for spec in model_specs
+    }
+    envelope_rows = build_prediction_envelopes(
+        model_specs,
+        model_position_predictions_3d,
+        windows,
     )
 
     position_metrics = {method: OneDimMetric() for method in position_methods}
@@ -618,6 +746,11 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
         "scaler_npz": str(args.scaler_npz),
         "output_dir": str(args.output_dir),
         "axis_maps": {"acc": args.acc_axis_map, "gyro": args.gyro_axis_map},
+        "launch_conditions": {
+            "Scenario_Oxidizer_Fraction": args.oxidizer_fraction,
+            "Scenario_Pressure_Scale": args.pressure_scale,
+            "Scenario_Rocket_Mass_Scale": args.rocket_mass_scale,
+        },
         "rows_after_downsample": int(len(times)),
         "time_start_s": float(times[0]),
         "time_end_s": float(times[-1]),
@@ -650,12 +783,22 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict]]:
                 "landing spot prediction",
                 "live operational dropout handling",
             ],
+            "envelope_note": (
+                "Z envelopes are signed errors against the telemetry-derived vertical reference. "
+                "X/Y envelopes are predicted displacements from each cutoff state and are not "
+                "horizontal accuracy measurements or calibrated uncertainty intervals."
+            ),
         },
     }
-    return summary, rows
+    return summary, rows, envelope_rows
 
 
-def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> None:
+def write_outputs(
+    args: argparse.Namespace,
+    summary: dict,
+    rows: list[dict],
+    envelope_rows: list[dict],
+) -> None:
     with (args.output_dir / "summary.json").open("w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2)
     if rows:
@@ -663,6 +806,13 @@ def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> 
             writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
             writer.writeheader()
             writer.writerows(rows)
+    if envelope_rows:
+        with (args.output_dir / "prediction_envelope_by_horizon.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(envelope_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(envelope_rows)
 
     lines = [
         "REAL FLIGHT REPLAY SUMMARY - Z AXIS ONLY",
@@ -671,6 +821,10 @@ def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> 
         f"Thrust curve: {summary['thrust_curve']}",
         f"Scalers: {summary['scaler_npz']}",
         f"Axis maps: acc={summary['axis_maps']['acc']}, gyro={summary['axis_maps']['gyro']}",
+        "Launch conditions: "
+        f"oxidizer_fraction={summary['launch_conditions']['Scenario_Oxidizer_Fraction']:.6f}, "
+        f"pressure_scale={summary['launch_conditions']['Scenario_Pressure_Scale']:.6f}, "
+        f"rocket_mass_scale={summary['launch_conditions']['Scenario_Rocket_Mass_Scale']:.6f}",
         f"Rows after downsampling: {summary['rows_after_downsample']:,}",
         f"Downsample: {summary['downsample']}  dt_median={summary['dt_median_s']:.5f}s",
         f"Prediction window: {summary['pred_len']} samples "
@@ -708,6 +862,7 @@ def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> 
             "INTERPRETATION WARNING",
             "This is a real-flight proof-of-concept replay using vertical telemetry-derived references.",
             "It does not validate X/Y or full 3D trajectory accuracy.",
+            "The envelope plots summarize overlapping forecast windows; they are not calibrated uncertainty intervals.",
         ]
     )
     report = "\n".join(lines) + "\n"
@@ -715,7 +870,12 @@ def write_outputs(args: argparse.Namespace, summary: dict, rows: list[dict]) -> 
     log("\n" + report)
 
 
-def render_plots(args: argparse.Namespace, summary: dict, rows: list[dict]) -> None:
+def render_plots(
+    args: argparse.Namespace,
+    summary: dict,
+    rows: list[dict],
+    envelope_rows: list[dict],
+) -> None:
     if args.no_plots:
         return
     import matplotlib
@@ -816,6 +976,194 @@ def render_plots(args: argparse.Namespace, summary: dict, rows: list[dict]) -> N
         fig.savefig(args.output_dir / "z_window_error_timeline.png", dpi=180)
         plt.close(fig)
 
+    if not envelope_rows:
+        return
+
+    envelopes = pd.DataFrame(envelope_rows)
+    neural_methods = [item["name"] for item in summary["models"]]
+    axis_descriptions = {
+        "X": "Predicted X displacement from cutoff (m)",
+        "Y": "Predicted Y displacement from cutoff (m)",
+        "Z": "Z position error vs vertical reference (m)",
+    }
+
+    fig, axes = plt.subplots(
+        3,
+        len(neural_methods),
+        figsize=(5.2 * len(neural_methods), 11),
+        sharex=True,
+        squeeze=False,
+    )
+    for row_index, axis_name in enumerate(["X", "Y", "Z"]):
+        for column_index, method in enumerate(neural_methods):
+            axis = axes[row_index, column_index]
+            item = envelopes[
+                (envelopes["method"] == method) & (envelopes["axis"] == axis_name)
+            ].sort_values("horizon_step")
+            lead = item["lead_time_s"].to_numpy(dtype=float)
+            minimum = item["minimum_m"].to_numpy(dtype=float)
+            p05 = item["p05_m"].to_numpy(dtype=float)
+            median = item["median_m"].to_numpy(dtype=float)
+            p95 = item["p95_m"].to_numpy(dtype=float)
+            maximum = item["maximum_m"].to_numpy(dtype=float)
+            axis.fill_between(
+                lead,
+                minimum,
+                maximum,
+                color=COLORS[method],
+                alpha=0.10,
+                label="Full empirical range",
+            )
+            axis.fill_between(
+                lead,
+                p05,
+                p95,
+                color=COLORS[method],
+                alpha=0.30,
+                label="Central 90% of windows",
+            )
+            axis.plot(lead, median, color=COLORS[method], linewidth=2, label="Median")
+            axis.axhline(0.0, color="black", linewidth=0.8, alpha=0.6)
+            peak = float(item["max_abs_m"].max())
+            axis.text(
+                0.03,
+                0.95,
+                f"peak |value| = {peak:.1f} m",
+                transform=axis.transAxes,
+                ha="left",
+                va="top",
+                fontsize=9,
+                bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+            )
+            if row_index == 0:
+                axis.set_title(method)
+            if column_index == 0:
+                axis.set_ylabel(axis_descriptions[axis_name])
+            if row_index == 2:
+                axis.set_xlabel("Forecast lead time (s)")
+            axis.grid(alpha=0.25)
+    axes[0, 0].legend(loc="lower left", fontsize=8)
+    fig.suptitle("Real-Flight Forecast Envelopes Across Overlapping Cut-Off Windows", y=0.995)
+    fig.text(
+        0.5,
+        0.005,
+        "Shading is an empirical spread across windows, not a calibrated confidence interval. "
+        "X/Y have no independent flight-path reference; Z uses the telemetry-derived vertical reference.",
+        ha="center",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.025, 1, 0.98))
+    fig.savefig(args.output_dir / "xyz_prediction_envelopes_by_model.png", dpi=200)
+    fig.savefig(args.output_dir / "xyz_prediction_envelopes_by_model.pdf")
+    plt.close(fig)
+
+    fig, axes = plt.subplots(
+        1,
+        len(neural_methods),
+        figsize=(5.2 * len(neural_methods), 4.8),
+        sharex=True,
+        sharey=True,
+        squeeze=False,
+    )
+    for index, method in enumerate(neural_methods):
+        axis = axes[0, index]
+        item = envelopes[
+            (envelopes["method"] == method) & (envelopes["axis"] == "Z")
+        ].sort_values("horizon_step")
+        lead = item["lead_time_s"].to_numpy(dtype=float)
+        minimum = item["minimum_m"].to_numpy(dtype=float)
+        p05 = item["p05_m"].to_numpy(dtype=float)
+        median = item["median_m"].to_numpy(dtype=float)
+        p95 = item["p95_m"].to_numpy(dtype=float)
+        maximum = item["maximum_m"].to_numpy(dtype=float)
+        axis.fill_between(
+            lead,
+            minimum,
+            maximum,
+            color=COLORS[method],
+            alpha=0.10,
+            label="Full empirical range",
+        )
+        axis.fill_between(
+            lead,
+            p05,
+            p95,
+            color=COLORS[method],
+            alpha=0.32,
+            label="Central 90%",
+        )
+        axis.plot(lead, median, color=COLORS[method], linewidth=2, label="Median error")
+        axis.axhline(0.0, color="black", linewidth=0.8)
+        axis.set_title(method)
+        axis.set_xlabel("Forecast lead time (s)")
+        axis.grid(alpha=0.25)
+        peak_index = int(item["max_abs_m"].to_numpy(dtype=float).argmax())
+        axis.text(
+            0.03,
+            0.95,
+            f"maximum drift = {item['max_abs_m'].iloc[peak_index]:.1f} m",
+            transform=axis.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+        )
+    axes[0, 0].set_ylabel("Z position error (m)")
+    axes[0, 0].legend(loc="lower left", fontsize=8)
+    fig.suptitle("Vertical Drift Growth Over the Real-Flight Forecast Horizon")
+    fig.text(
+        0.5,
+        0.01,
+        "Envelope across all overlapping windows; this is an empirical error distribution, not uncertainty calibration.",
+        ha="center",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.04, 1, 0.94))
+    fig.savefig(args.output_dir / "z_drift_envelopes_by_model.png", dpi=200)
+    fig.savefig(args.output_dir / "z_drift_envelopes_by_model.pdf")
+    plt.close(fig)
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex="col")
+    for column_index, axis_name in enumerate(["X", "Y", "Z"]):
+        for method in neural_methods:
+            item = envelopes[
+                (envelopes["method"] == method) & (envelopes["axis"] == axis_name)
+            ].sort_values("horizon_step")
+            lead = item["lead_time_s"].to_numpy(dtype=float)
+            axes[0, column_index].plot(
+                lead,
+                item["central_90_width_m"],
+                color=COLORS[method],
+                linewidth=2,
+                label=method,
+            )
+            axes[1, column_index].plot(
+                lead,
+                item["max_abs_m"],
+                color=COLORS[method],
+                linewidth=2,
+                label=method,
+            )
+        axes[0, column_index].set_title(f"{axis_name} axis")
+        axes[0, column_index].set_ylabel("Central 90% width (m)")
+        axes[1, column_index].set_ylabel("Maximum absolute value (m)")
+        axes[1, column_index].set_xlabel("Forecast lead time (s)")
+        for axis in axes[:, column_index]:
+            axis.grid(alpha=0.25)
+    axes[0, 0].legend(fontsize=8)
+    fig.suptitle("Forecast Spread Width and Maximum Drift by Horizon")
+    fig.text(
+        0.5,
+        0.01,
+        "For X/Y the value is displacement from cutoff; for Z it is error against the vertical reference.",
+        ha="center",
+        fontsize=9,
+    )
+    fig.tight_layout(rect=(0, 0.035, 1, 0.95))
+    fig.savefig(args.output_dir / "envelope_width_and_max_drift.png", dpi=200)
+    fig.savefig(args.output_dir / "envelope_width_and_max_drift.pdf")
+    plt.close(fig)
+
 
 def main() -> int:
     args = parse_args()
@@ -840,12 +1188,18 @@ def main() -> int:
     log(f"Parameters: {args.parameters}")
     log(f"Thrust curve: {args.thrust_curve}")
     log(f"Axis maps: acc={args.acc_axis_map}, gyro={args.gyro_axis_map}")
+    log(
+        "Launch conditions: "
+        f"oxidizer_fraction={args.oxidizer_fraction:.6f}, "
+        f"pressure_scale={args.pressure_scale:.6f}, "
+        f"rocket_mass_scale={args.rocket_mass_scale:.6f}"
+    )
 
     start_time = time.time()
-    summary, rows = evaluate(args)
+    summary, rows, envelope_rows = evaluate(args)
     summary["runtime_seconds"] = time.time() - start_time
-    write_outputs(args, summary, rows)
-    render_plots(args, summary, rows)
+    write_outputs(args, summary, rows, envelope_rows)
+    render_plots(args, summary, rows, envelope_rows)
     log(f"Finished. Open summary.txt in {args.output_dir}")
     return 0
 
