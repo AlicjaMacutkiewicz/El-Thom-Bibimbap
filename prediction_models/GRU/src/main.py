@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from data_loader import INPUT_COLUMNS, make_sequences, read_flight_data, split_flights
-from GRU_model import GRU
+from GRU_model import GRU, PersistenceGatedGRU
 from physics import (
     TotalLoss,
     calculate_x_b_conditioned,
@@ -47,7 +47,17 @@ def parse_args():
     parser.add_argument("--year", type=str, default="2025")
     parser.add_argument("--downsample", type=int, default=25)
     parser.add_argument("--resume-from", type=str, default=None)
-    parser.add_argument("--model-type", type=str, default="gru_res_phys")
+    parser.add_argument(
+        "--model-type",
+        choices=["gru", "gru_res", "gru_res_phys", "gru_res_phys_persist_gate"],
+        default="gru_res_phys",
+    )
+    parser.add_argument(
+        "--persistence-regret-weight",
+        type=float,
+        default=0.1,
+        help="Hinge penalty for gated forecasts whose trajectory is worse than persistence.",
+    )
     parser.add_argument("--parameters", type=str, default=None)
     parser.add_argument("--thrust-curve", type=str, default=None)
 
@@ -138,7 +148,7 @@ def main():
     if args.model_type == "gru":
         target_mean = mean_acc
         target_std = std_acc
-    else: # Covers "gru_res" and "gru_res_phys"
+    else: # Residual and persistence-gated variants use the residual scaler.
         target_mean = mean_xs
         target_std = std_xs
 
@@ -156,7 +166,16 @@ def main():
 
     # sequence generation
     loss = TotalLoss(
-        parameters, thrust_curve, mean_xs, std_xs, mean_pos, std_pos, sampling_rate, lambda_h=0.2, model_type = args.model_type,
+        parameters,
+        thrust_curve,
+        mean_xs,
+        std_xs,
+        mean_pos,
+        std_pos,
+        sampling_rate,
+        lambda_h=0.2,
+        model_type=args.model_type,
+        lambda_regret=args.persistence_regret_weight,
     ).to(device)
 
     (
@@ -252,7 +271,15 @@ def main():
     )
 
     # model init and training
-    model = GRU(input_size=X_train.shape[-1], hidden_size=64, output_size=3, num_layers=2, dropout=0.2)
+    model_class = PersistenceGatedGRU if args.model_type == "gru_res_phys_persist_gate" else GRU
+    output_size = 6 if args.model_type == "gru_res_phys_persist_gate" else 3
+    model = model_class(
+        input_size=X_train.shape[-1],
+        hidden_size=64,
+        output_size=output_size,
+        num_layers=2,
+        dropout=0.2,
+    )
 
     if args.resume_from:
         print(f"resuming training from checkpoint: {args.resume_from}")
@@ -278,6 +305,7 @@ def main():
         model,
         X_train,
         condition_train,
+        y_hist_train,
         y_train,
         pos_train,
         t_train,
@@ -286,6 +314,7 @@ def main():
         initial_time_train,
         X_test,
         condition_test,
+        y_hist_test,
         y_test,
         pos_test,
         t_test,
@@ -298,11 +327,17 @@ def main():
         batch_size=args.batch_size,
         training_rounds=args.training_rounds,
         pred_len=pred_len,
+        checkpoint_prefix=(
+            "gated_" if args.model_type == "gru_res_phys_persist_gate" else ""
+        ),
     )
 
     # visualization and saving
 
-    model_filename = f"gru_model_rounds{args.training_rounds}_seq{args.seq_len}.pth"
+    model_prefix = "gated_" if args.model_type == "gru_res_phys_persist_gate" else ""
+    model_filename = (
+        f"{model_prefix}gru_model_rounds{args.training_rounds}_seq{args.seq_len}.pth"
+    )
     torch.save(model.state_dict(), model_filename)
     print(f"model weights saved to file: {model_filename}")
 
@@ -342,6 +377,7 @@ def main():
             sampling_rate=sampling_rate,
             sample_idx=sample_idx,
             condition_test=condition_test,
+            model_type=args.model_type,
         )
 
 

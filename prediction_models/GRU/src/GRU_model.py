@@ -90,3 +90,33 @@ class GRU(nn.Module):
         hn = torch.stack(h, dim=0)
 
         return outputs, hn
+
+
+class PersistenceGatedGRU(GRU):
+    """GRU head for blending persistence with the learned RK4-residual forecast.
+
+    The first three outputs are normalized RK4 residuals. The final three are
+    per-axis gate logits. The loss/evaluator constructs the physical forecast as
+
+        a_hat = a_last + sigmoid(gate) * (a_rk4_residual - a_last).
+
+    A negative gate bias starts training near the persistence expert. This is the
+    carry-biased initialization used by Highway-style gates: the learned branch
+    must earn influence instead of overriding a useful baseline immediately.
+    """
+
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        output_size=6,
+        num_layers=1,
+        dropout=0.0,
+        gate_bias=-2.0,
+    ):
+        if output_size != 6:
+            raise ValueError("PersistenceGatedGRU requires six outputs: 3 residuals + 3 gates.")
+        super().__init__(input_size, hidden_size, output_size, num_layers, dropout)
+        with torch.no_grad():
+            self.fc.weight[3:].zero_()
+            self.fc.bias[3:].fill_(gate_bias)

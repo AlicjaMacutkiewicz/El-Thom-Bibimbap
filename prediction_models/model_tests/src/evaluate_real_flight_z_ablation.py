@@ -45,6 +45,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from evaluate_gru import (  # noqa: E402  # type: ignore
     CONDITION_COLUMNS,
     GRU_RK4_METHOD,
+    GRU_RK4_PHYS_GATE_METHOD,
     GRU_RK4_PHYS_METHOD,
     INPUT_COLUMNS,
     PLAIN_GRU_METHOD,
@@ -66,6 +67,7 @@ POSITION_METHODS = [
     PLAIN_GRU_METHOD,
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
+    GRU_RK4_PHYS_GATE_METHOD,
     "Polynomial",
     "RK4 only",
     "Last acceleration",
@@ -75,6 +77,7 @@ ACCELERATION_METHODS = [
     PLAIN_GRU_METHOD,
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
+    GRU_RK4_PHYS_GATE_METHOD,
     "RK4 only",
     "Last acceleration",
 ]
@@ -82,6 +85,7 @@ COLORS = {
     PLAIN_GRU_METHOD: "#17becf",
     GRU_RK4_METHOD: "#d62728",
     GRU_RK4_PHYS_METHOD: "#8c564b",
+    GRU_RK4_PHYS_GATE_METHOD: "#e377c2",
     "Polynomial": "#1f77b4",
     "RK4 only": "#9467bd",
     "Last acceleration": "#ff7f0e",
@@ -169,6 +173,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Residual GRU checkpoint with trajectory-consistency loss.",
+    )
+    parser.add_argument(
+        "--gru-res-phys-gate-model",
+        type=Path,
+        default=None,
+        help="Persistence-gated residual GRU checkpoint with trajectory-consistency loss.",
     )
     parser.add_argument(
         "--scaler-npz",
@@ -269,6 +279,11 @@ def resolve_paths(args: argparse.Namespace) -> None:
     else:
         args.gru_res_phys_model = resolve_model_path(
             args.gru_res_phys_model, model_root / "gru_res_phys.pth"
+        )
+    if args.gru_res_phys_gate_model is not None:
+        args.gru_res_phys_gate_model = resolve_model_path(
+            args.gru_res_phys_gate_model,
+            model_root / "gru_res_phys_persist_gate.pth",
         )
 
     if args.scaler_npz is None:
@@ -406,6 +421,7 @@ def make_windows(
         "initial_velocity_z": (positions[previous, 2] - positions[before_previous, 2]) / dt,
         "initial_time": times[previous],
         "previous_acceleration_z": accelerations[previous, 2],
+        "previous_accelerations": accelerations[previous],
         "condition_context": inputs[previous, -len(CONDITION_COLUMNS) :],
     }
 
@@ -579,7 +595,9 @@ def load_scalers(path: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.nda
 
 
 def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
-    GRU, calculate_x_b, load_parameters, load_thrust_curve = configure_imports(args.repo)
+    GRU, PersistenceGatedGRU, calculate_x_b, load_parameters, load_thrust_curve = (
+        configure_imports(args.repo)
+    )
     parameters = load_parameters(args.parameters)
     thrust_curve = load_thrust_curve(args.thrust_curve)
 
@@ -600,6 +618,11 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
             (PLAIN_GRU_METHOD, args.gru_model, "direct"),
             (GRU_RK4_METHOD, args.gru_res_model, "residual"),
             (GRU_RK4_PHYS_METHOD, args.gru_res_phys_model, "residual"),
+            (
+                GRU_RK4_PHYS_GATE_METHOD,
+                args.gru_res_phys_gate_model,
+                "persistence_gated_residual",
+            ),
         ]
         if path is not None
     ]
@@ -619,7 +642,14 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
 
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs = load_scalers(args.scaler_npz)
     device, gpu_ids = select_device(args)
-    models = load_networks(GRU, model_specs, device, gpu_ids, input_size=len(mean_in))
+    models = load_networks(
+        GRU,
+        PersistenceGatedGRU,
+        model_specs,
+        device,
+        gpu_ids,
+        input_size=len(mean_in),
+    )
 
     windows = make_windows(
         inputs,
@@ -654,6 +684,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         args.batch_size,
         device,
         args.amp,
+        windows["previous_accelerations"],
     )
 
     acceleration_predictions: dict[str, np.ndarray] = {
@@ -891,6 +922,7 @@ def render_plots(
             PLAIN_GRU_METHOD,
             GRU_RK4_METHOD,
             GRU_RK4_PHYS_METHOD,
+            GRU_RK4_PHYS_GATE_METHOD,
             "Polynomial",
             "RK4 only",
             "Last acceleration",
@@ -939,7 +971,14 @@ def render_plots(
     if rows:
         data = pd.DataFrame(rows)
         fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-        for method in [GRU_RK4_PHYS_METHOD, PLAIN_GRU_METHOD, "Polynomial", "Last acceleration"]:
+        for method in [
+            GRU_RK4_PHYS_GATE_METHOD,
+            GRU_RK4_PHYS_METHOD,
+            GRU_RK4_METHOD,
+            PLAIN_GRU_METHOD,
+            "Polynomial",
+            "Last acceleration",
+        ]:
             if method not in position:
                 continue
             axes[0].plot(
@@ -956,7 +995,13 @@ def render_plots(
         axes[0].grid(alpha=0.3)
         axes[0].legend()
 
-        for method in [GRU_RK4_PHYS_METHOD, PLAIN_GRU_METHOD, "Last acceleration"]:
+        for method in [
+            GRU_RK4_PHYS_GATE_METHOD,
+            GRU_RK4_PHYS_METHOD,
+            GRU_RK4_METHOD,
+            PLAIN_GRU_METHOD,
+            "Last acceleration",
+        ]:
             if method not in acceleration:
                 continue
             axes[1].plot(
@@ -1174,6 +1219,7 @@ def main() -> int:
         args.gru_model,
         args.gru_res_model,
         args.gru_res_phys_model,
+        args.gru_res_phys_gate_model,
         args.scaler_npz,
         args.parameters,
         args.thrust_curve,

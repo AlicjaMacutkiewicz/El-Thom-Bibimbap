@@ -51,11 +51,13 @@ POSITION_COLUMNS = ["Position_X", "Position_Y", "Position_Z"]
 PLAIN_GRU_METHOD = "Plain GRU"
 GRU_RK4_METHOD = "GRU-RK4"
 GRU_RK4_PHYS_METHOD = "GRU-RK4 + physics"
+GRU_RK4_PHYS_GATE_METHOD = "Gated GRU-RK4 + physics"
 BASELINE_METHODS = ["Polynomial", "RK4 only", "Last acceleration", "Oracle acceleration"]
 COLORS = {
     PLAIN_GRU_METHOD: "#17becf",
     GRU_RK4_METHOD: "#d62728",
     GRU_RK4_PHYS_METHOD: "#8c564b",
+    GRU_RK4_PHYS_GATE_METHOD: "#e377c2",
     "Polynomial": "#1f77b4",
     "RK4 only": "#9467bd",
     "Last acceleration": "#ff7f0e",
@@ -95,6 +97,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Residual GRU checkpoint with physics-position loss. Defaults to prediction_models/GRU/src/gru_res_phys_model.pth.",
+    )
+    parser.add_argument(
+        "--gru-res-phys-gate-model",
+        type=Path,
+        default=None,
+        help="Persistence-gated residual GRU checkpoint with trajectory-consistency loss.",
     )
     parser.add_argument(
         "--scaler-data-dir",
@@ -209,6 +217,8 @@ def resolve_paths(args: argparse.Namespace) -> None:
     if args.gru_res_phys_model is None:
         args.gru_res_phys_model = args.model or model_root / "gru_res_phys_model.pth"
     args.gru_res_phys_model = args.gru_res_phys_model.expanduser().resolve()
+    if args.gru_res_phys_gate_model is not None:
+        args.gru_res_phys_gate_model = args.gru_res_phys_gate_model.expanduser().resolve()
     args.model = args.gru_res_phys_model
     if args.output_dir is None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -387,6 +397,14 @@ def configured_model_specs(args: argparse.Namespace) -> list[ModelSpec]:
         ModelSpec(GRU_RK4_METHOD, args.gru_res_model, "residual"),
         ModelSpec(GRU_RK4_PHYS_METHOD, args.gru_res_phys_model, "residual"),
     ]
+    if args.gru_res_phys_gate_model is not None:
+        candidates.append(
+            ModelSpec(
+                GRU_RK4_PHYS_GATE_METHOD,
+                args.gru_res_phys_gate_model,
+                "persistence_gated_residual",
+            )
+        )
     specs: list[ModelSpec] = []
     missing: list[ModelSpec] = []
     for spec in candidates:
@@ -416,7 +434,12 @@ def acceleration_method_order(model_specs: list[ModelSpec]) -> list[str]:
 
 
 def primary_method(model_specs: list[ModelSpec]) -> str:
-    for preferred in [GRU_RK4_PHYS_METHOD, GRU_RK4_METHOD, PLAIN_GRU_METHOD]:
+    for preferred in [
+        GRU_RK4_PHYS_GATE_METHOD,
+        GRU_RK4_PHYS_METHOD,
+        GRU_RK4_METHOD,
+        PLAIN_GRU_METHOD,
+    ]:
         if any(spec.name == preferred for spec in model_specs):
             return preferred
     return model_specs[0].name
@@ -427,14 +450,14 @@ def configure_imports(repo: Path):
     classical_src = repo / "prediction_models" / "classical_model" / "src"
     sys.path.insert(0, str(classical_src))
     sys.path.insert(0, str(gru_src))
-    from GRU_model import GRU  # type: ignore
+    from GRU_model import GRU, PersistenceGatedGRU  # type: ignore
     from physics import (  # type: ignore
         calculate_x_b_conditioned,
         load_parameters,
         load_thrust_curve,
     )
 
-    return GRU, calculate_x_b_conditioned, load_parameters, load_thrust_curve
+    return GRU, PersistenceGatedGRU, calculate_x_b_conditioned, load_parameters, load_thrust_curve
 
 
 def select_device(args: argparse.Namespace) -> tuple[torch.device, list[int]]:
@@ -577,6 +600,7 @@ def _checkpoint_input_size(state: dict[str, torch.Tensor]) -> int | None:
 
 def load_network(
     GRU,
+    PersistenceGatedGRU,
     path_or_args,
     device: torch.device,
     gpu_ids: list[int],
@@ -594,7 +618,20 @@ def load_network(
             f"was configured with {input_size}. Recreate scalers/evaluation data for the same "
             "input schema as the checkpoint."
         )
-    model = GRU(input_size=input_size, hidden_size=64, output_size=3, num_layers=2, dropout=0.2)
+    output_size = int(state["fc.weight"].shape[0])
+    if output_size == 6:
+        model_class = PersistenceGatedGRU
+    elif output_size == 3:
+        model_class = GRU
+    else:
+        raise RuntimeError(f"Unsupported checkpoint output size {output_size} in {path}.")
+    model = model_class(
+        input_size=input_size,
+        hidden_size=64,
+        output_size=output_size,
+        num_layers=2,
+        dropout=0.2,
+    )
     model.load_state_dict(state)
     model.eval()
     model.to(device)
@@ -607,6 +644,7 @@ def load_network(
 
 def load_networks(
     GRU,
+    PersistenceGatedGRU,
     model_specs: list[ModelSpec],
     device: torch.device,
     gpu_ids: list[int],
@@ -615,7 +653,9 @@ def load_networks(
     models = {}
     for spec in model_specs:
         log(f"Loading {spec.name} from {spec.path}")
-        models[spec.name] = load_network(GRU, spec.path, device, gpu_ids, input_size)
+        models[spec.name] = load_network(
+            GRU, PersistenceGatedGRU, spec.path, device, gpu_ids, input_size
+        )
     return models
 
 
@@ -714,6 +754,7 @@ def predict_model_accelerations(
     batch_size: int,
     device: torch.device,
     amp: bool,
+    last_acceleration: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     predictions = {}
     for spec in model_specs:
@@ -731,6 +772,17 @@ def predict_model_accelerations(
             predictions[spec.name] = normalized * std_acc + mean_acc
         elif spec.output_mode == "residual":
             predictions[spec.name] = base_acc + normalized * std_xs + mean_xs
+        elif spec.output_mode == "persistence_gated_residual":
+            if normalized.shape[-1] != 6:
+                raise ValueError(f"{spec.name} must emit 3 residuals and 3 gate logits.")
+            if last_acceleration is None:
+                raise ValueError(f"{spec.name} requires the last observed acceleration.")
+            residual = normalized[:, :, :3] * std_xs + mean_xs
+            learned_candidate = base_acc + residual
+            gate_logits = np.clip(normalized[:, :, 3:6], -30.0, 30.0)
+            gate = 1.0 / (1.0 + np.exp(-gate_logits))
+            anchor = np.repeat(last_acceleration[:, None, :], pred_len, axis=1)
+            predictions[spec.name] = anchor + gate * (learned_candidate - anchor)
         else:
             raise ValueError(f"Unknown output mode for {spec.name}: {spec.output_mode}")
     return predictions
@@ -844,6 +896,7 @@ def evaluate(
         base_acc = baseline_acceleration(
             calculate_x_b, future_times, parameters, thrust_curve, rate, condition_context
         )
+        last_observed_acceleration = targets[starts - 1]
         model_accelerations = predict_model_accelerations(
             model_specs,
             models,
@@ -859,8 +912,9 @@ def evaluate(
             args.batch_size,
             device,
             args.amp,
+            last_observed_acceleration,
         )
-        last_acc = np.repeat(targets[starts - 1, None, :], args.pred_len, axis=1)
+        last_acc = np.repeat(last_observed_acceleration[:, None, :], args.pred_len, axis=1)
         for method, prediction in model_accelerations.items():
             acceleration[method].add(prediction, actual_acc)
         acceleration["RK4 only"].add(base_acc, actual_acc)
@@ -1106,6 +1160,7 @@ def evaluate_landing_horizons(
             args.batch_size,
             device,
             args.amp,
+            np.stack(previous_accelerations),
         )
         last_acc = np.repeat(np.stack(previous_accelerations)[:, None, :], horizon, axis=1)
         acceleration_predictions = {
@@ -1568,7 +1623,9 @@ def main() -> int:
     log("Neural checkpoints selected:")
     for spec in model_specs:
         log(f"  {spec.name}: {spec.path} ({spec.output_mode})")
-    GRU, calculate_x_b, load_parameters, load_thrust_curve = configure_imports(args.repo)
+    GRU, PersistenceGatedGRU, calculate_x_b, load_parameters, load_thrust_curve = (
+        configure_imports(args.repo)
+    )
     model_root = args.repo / "source_model" / "R7_SIMLE"
     parameters_path = (
         args.parameters or model_root / "R7_ROBUSTNESS" / "parameters.json"
@@ -1585,7 +1642,14 @@ def main() -> int:
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs, scaler_meta = compute_scalers(
         args, calculate_x_b, parameters, thrust_curve, sampling_rate
     )
-    models = load_networks(GRU, model_specs, device, gpu_ids, input_size=len(mean_in))
+    models = load_networks(
+        GRU,
+        PersistenceGatedGRU,
+        model_specs,
+        device,
+        gpu_ids,
+        input_size=len(mean_in),
+    )
     summary, rows, worst, illustrative = evaluate(
         args,
         model_specs,

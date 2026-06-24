@@ -1000,7 +1000,9 @@ def main() -> int:
         f"rocket_mass_scale={args.rocket_mass_scale:.6f}"
     )
 
-    GRU, calculate_x_b, load_parameters, load_thrust_curve = configure_imports(args.repo)
+    GRU, PersistenceGatedGRU, calculate_x_b, load_parameters, load_thrust_curve = (
+        configure_imports(args.repo)
+    )
     parameters = load_parameters(args.parameters)
     thrust_curve = load_thrust_curve(args.thrust_curve)
 
@@ -1026,7 +1028,9 @@ def main() -> int:
         raise RuntimeError(
             f"Real-flight input has {inputs.shape[1]} columns but the scaler has {len(mean_in)}."
         )
-    model = load_network(GRU, args, device, gpu_ids, input_size=len(mean_in))
+    model = load_network(
+        GRU, PersistenceGatedGRU, args, device, gpu_ids, input_size=len(mean_in)
+    )
 
     start_time = time.time()
     main_summary, rows, worst = evaluate_horizon(

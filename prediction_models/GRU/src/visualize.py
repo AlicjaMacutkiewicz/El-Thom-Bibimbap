@@ -42,6 +42,7 @@ def plot_prediction(
     axis=0,
     filename_prefix="prediction_sample",
     condition_test=None,
+    model_type="gru_res_phys",
 ):
     """
     Generates and saves a plot comparing the model's trajectory prediction against the ground truth.
@@ -77,20 +78,26 @@ def plot_prediction(
             condition = condition_test[sample_idx : sample_idx + 1]
 
         # forward pass through the GRU to get the predicted residual (x_s)
-        predicted_x_s, _ = model(input_seq, pred_len=pred_len)
+        raw_prediction, _ = model(input_seq, pred_len=pred_len)
 
         # GRU output is a normalized residual — denormalize with residual stats
-        predicted_x_s_denorm = predicted_x_s[0].cpu().numpy() * std_xs + mean_xs
+        predicted_x_s_denorm = raw_prediction[0, :, :3].cpu().numpy() * std_xs + mean_xs
 
-        # ground truth and history are normalized x_total — denormalize with x_total stats
-        target_denorm = target.cpu().numpy() * std_acc + mean_acc
-        history_denorm = y_hist_test[sample_idx].cpu().numpy() * std_acc + mean_acc
+        # Targets/history use the active model target scaler supplied as mean_xs/std_xs.
+        target_denorm = target.cpu().numpy() * std_xs + mean_xs
+        history_denorm = y_hist_test[sample_idx].cpu().numpy() * std_xs + mean_xs
 
         # calculate and add the known physics baseline (x_b)
         base_acc = calculate_x_b_conditioned(
             target_times, parameters, thrust_curve, sampling_rate, condition
         )[0]
-        prediction = predicted_x_s_denorm + base_acc
+        learned_candidate = predicted_x_s_denorm + base_acc
+        if model_type == "gru_res_phys_persist_gate":
+            gate = torch.sigmoid(raw_prediction[0, :, 3:6]).cpu().numpy()
+            anchor = history_denorm[-1:, :3]
+            prediction = anchor + gate * (learned_candidate - anchor)
+        else:
+            prediction = learned_candidate
         rk4_baseline = base_acc
         last_value_baseline = np.repeat(history_denorm[-1:, :3], pred_len, axis=0)
         residual_target = target_denorm - base_acc

@@ -6,6 +6,7 @@ def train_model(
     model,
     X_train,
     condition_train,
+    y_hist_train,
     y_train,
     pos_train,
     t_train,
@@ -14,6 +15,7 @@ def train_model(
     initial_time_train,
     X_test,
     condition_test,
+    y_hist_test,
     y_test,
     pos_test,
     t_test,
@@ -27,6 +29,7 @@ def train_model(
     batch_size=64,
     training_rounds=10,
     year="all",
+    checkpoint_prefix="",
 ):
     """
     Executes the training loop for the GRU model, integrating Weights & Biases for live telemetry.
@@ -58,7 +61,7 @@ def train_model(
     # initialize wandb session
     wandb.init(
         project="rocket-trajectory",
-        name=f"gru_seq{pred_len}_yr{year}",
+        name=f"{checkpoint_prefix}gru_seq{pred_len}_yr{year}",
         config={"batch_size": batch_size, "epochs": training_rounds, "seq_len": pred_len},
     )
 
@@ -72,6 +75,8 @@ def train_model(
     for training_round in range(training_rounds):
         round_loss = 0.0
         total_samples = 0
+        gate_sum = torch.zeros(3, dtype=torch.float64)
+        gate_count = 0
 
         model.train()
 
@@ -79,6 +84,7 @@ def train_model(
             # Load batch slices to the active device
             X_batch = X_train[i : i + batch_size].to(device)
             condition_batch = condition_train[i : i + batch_size].to(device)
+            anchor_acc_batch = y_hist_train[i : i + batch_size, -1, :].to(device)
             y_batch = y_train[i : i + batch_size].to(device)
             pos_batch = pos_train[i : i + batch_size].to(device)
             t_batch = t_train[i : i + batch_size].to(device)
@@ -88,6 +94,10 @@ def train_model(
 
             # pass input sequence through the GRU
             preds, _ = model(X_batch, pred_len=pred_len)
+            if preds.shape[-1] == 6:
+                gates = torch.sigmoid(preds[:, :, 3:6].detach()).cpu()
+                gate_sum += gates.sum(dim=(0, 1), dtype=torch.float64)
+                gate_count += gates.shape[0] * gates.shape[1]
 
             # GRU outputs the predicted residual (x_s)
             # PINN loss adds base physics (x_b), integrates, and compares position
@@ -100,6 +110,7 @@ def train_model(
                 initial_vel_batch,
                 initial_time_batch,
                 condition_batch,
+                anchor_acc_batch,
             )
 
             # backpropagation
@@ -121,6 +132,7 @@ def train_model(
             model,
             X_test,
             condition_test,
+            y_hist_test,
             y_test,
             pos_test,
             t_test,
@@ -137,30 +149,45 @@ def train_model(
         print(
             f"Iteration {training_round + 1}, train loss: {avg_loss:.8e}, test loss: {avg_test_loss:.8e}"
         )
+        mean_gate = gate_sum / gate_count if gate_count else None
+        if mean_gate is not None:
+            print(
+                "mean learned-branch gate: "
+                f"X={mean_gate[0]:.4f}, Y={mean_gate[1]:.4f}, Z={mean_gate[2]:.4f}"
+            )
 
         # tell the scheduler to check the test loss and decide if it needs to slow down
         scheduler.step(avg_test_loss)
 
         # log metrics to wandb dashboard
         current_lr = optimizer.param_groups[0]["lr"]
-        wandb.log(
-            {
-                "Train Loss": avg_loss,
-                "Test Loss": avg_test_loss,
-                "Learning Rate": current_lr,
-                "Epoch": training_round + 1,
-            }
-        )
+        log_values = {
+            "Train Loss": avg_loss,
+            "Test Loss": avg_test_loss,
+            "Learning Rate": current_lr,
+            "Epoch": training_round + 1,
+        }
+        if mean_gate is not None:
+            log_values.update(
+                {
+                    "Gate Mean X": float(mean_gate[0]),
+                    "Gate Mean Y": float(mean_gate[1]),
+                    "Gate Mean Z": float(mean_gate[2]),
+                }
+            )
+        wandb.log(log_values)
 
         # checkpoint saving
         if (training_round + 1) % 5 == 0:
-            checkpoint_filename = f"gru_checkpoint_round_{training_round + 1}_seq{pred_len}.pth"
+            checkpoint_filename = (
+                f"{checkpoint_prefix}gru_checkpoint_round_{training_round + 1}_seq{pred_len}.pth"
+            )
             torch.save(model.state_dict(), checkpoint_filename)
             print(f"checkpoint: {checkpoint_filename}")
 
         if avg_test_loss < best_test_loss:
             best_test_loss = avg_test_loss
-            best_checkpoint_filename = f"best_gru_model_seq{pred_len}.pth"
+            best_checkpoint_filename = f"best_{checkpoint_prefix}gru_model_seq{pred_len}.pth"
             torch.save(model.state_dict(), best_checkpoint_filename)
             print(f"best checkpoint: {best_checkpoint_filename} (test loss: {best_test_loss:.8e})")
 
@@ -172,6 +199,7 @@ def evaluate_model(
     model,
     X_test,
     condition_test,
+    y_hist_test,
     y_test,
     pos_test,
     t_test,
@@ -206,6 +234,7 @@ def evaluate_model(
         for i in range(0, len(X_test), batch_size):
             X_batch = X_test[i : i + batch_size].to(device)
             condition_batch = condition_test[i : i + batch_size].to(device)
+            anchor_acc_batch = y_hist_test[i : i + batch_size, -1, :].to(device)
             y_batch = y_test[i : i + batch_size].to(device)
             pos_batch = pos_test[i : i + batch_size].to(device)
             t_batch = t_test[i : i + batch_size].to(device)
@@ -226,6 +255,7 @@ def evaluate_model(
                 initial_vel_batch,
                 initial_time_batch,
                 condition_batch,
+                anchor_acc_batch,
             )
 
             batch_samples = len(X_batch)

@@ -465,7 +465,8 @@ class TotalLoss(nn.Module):
         std_pos,
         sampling_rate,
         lambda_h=1e-6,
-        model_type = "gru_res_phys"
+        model_type="gru_res_phys",
+        lambda_regret=0.1,
     ):
         super().__init__()
         self.model_type = model_type
@@ -479,6 +480,8 @@ class TotalLoss(nn.Module):
         self.std_pos = torch.tensor(std_pos, dtype=torch.float32)
 
         self.lambda_h = lambda_h        
+        self.lambda_regret = lambda_regret
+        self.mse = nn.MSELoss()
 
     def forward(
         self,
@@ -490,11 +493,10 @@ class TotalLoss(nn.Module):
         initial_vel_batch,
         initial_time_batch,
         condition_batch=None,
+        anchor_acc_batch=None,
     ):
         device = preds.device
 
-        # preds are normalized residuals — denormalize with residual stats
-        denormalized_preds = preds * self.target_std.to(device) + self.target_mean.to(device)
         denormalized_acc_target = acc_batch[:, :, :3] * self.target_std.to(device) + self.target_mean.to(device)
         denormalized_pos_target = pos_batch[:, :, :3] * self.std_pos.to(device) + self.mean_pos.to(
             device
@@ -502,6 +504,65 @@ class TotalLoss(nn.Module):
 
         denorm_initial_pos = initial_pos_batch * self.std_pos.to(device) + self.mean_pos.to(device)
         denorm_initial_vel = initial_vel_batch * self.std_pos.to(device)
+
+        if self.model_type == "gru_res_phys_persist_gate":
+            if preds.shape[-1] != 6:
+                raise ValueError(
+                    "gru_res_phys_persist_gate expects 6 outputs: 3 residuals + 3 gate logits."
+                )
+            if anchor_acc_batch is None:
+                raise ValueError(
+                    "gru_res_phys_persist_gate requires the last observed acceleration anchor."
+                )
+
+            residual = (
+                preds[:, :, :3] * self.target_std.to(device) + self.target_mean.to(device)
+            )
+            gate = torch.sigmoid(preds[:, :, 3:6])
+            x_b_numpy = calculate_x_b_conditioned(
+                t_batch,
+                self.acc_loss.parameters,
+                self.acc_loss.thrust_curve,
+                self.acc_loss.sampling_rate,
+                condition_batch,
+            )
+            x_b = torch.as_tensor(x_b_numpy, dtype=preds.dtype, device=device)
+            learned_candidate = x_b + residual
+            anchor = (
+                anchor_acc_batch[:, :3] * self.target_std.to(device)
+                + self.target_mean.to(device)
+            )
+            anchor_sequence = anchor[:, None, :].expand_as(learned_candidate)
+            predicted_total = anchor_sequence + gate * (learned_candidate - anchor_sequence)
+
+            predicted_position, _ = integrate_acceleration(
+                predicted_total,
+                t_batch,
+                denorm_initial_pos,
+                denorm_initial_vel,
+                initial_time_batch,
+            )
+            anchor_position, _ = integrate_acceleration(
+                anchor_sequence,
+                t_batch,
+                denorm_initial_pos,
+                denorm_initial_vel,
+                initial_time_batch,
+            )
+
+            mse_acc = self.mse(predicted_total, denormalized_acc_target)
+            pinn = self.mse(predicted_position, denormalized_pos_target)
+            model_window_error = (
+                (predicted_position - denormalized_pos_target).square().sum(dim=-1).mean(dim=-1)
+            )
+            anchor_window_error = (
+                (anchor_position - denormalized_pos_target).square().sum(dim=-1).mean(dim=-1)
+            )
+            regret = torch.relu(model_window_error - anchor_window_error).mean()
+            return mse_acc + self.lambda_h * pinn + self.lambda_regret * regret
+
+        # Standard variants emit only three normalized acceleration/residual channels.
+        denormalized_preds = preds * self.target_std.to(device) + self.target_mean.to(device)
 
         # calculate isolated losses
         pinn = self.pinn_loss(
