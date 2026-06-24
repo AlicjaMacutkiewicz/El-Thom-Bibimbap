@@ -32,12 +32,14 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from evaluate_gru import (  # noqa: E402 # type: ignore
+    CONDITION_COLUMNS,
+    INPUT_COLUMNS,
     SENSOR_COLUMNS,
     baseline_acceleration,
     compute_scalers,
     configure_imports,
     load_network,
-    predict_residual,
+    predict_normalized,
 )
 
 
@@ -158,6 +160,24 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--parameters", type=Path, default=None)
     parser.add_argument("--thrust-curve", type=Path, default=None)
+    parser.add_argument(
+        "--oxidizer-fraction",
+        type=float,
+        required=True,
+        help="Launch oxidizer mass divided by the nominal oxidizer mass used by the model.",
+    )
+    parser.add_argument(
+        "--pressure-scale",
+        type=float,
+        required=True,
+        help="Launch-day chamber-pressure/thrust scale relative to nominal.",
+    )
+    parser.add_argument(
+        "--rocket-mass-scale",
+        type=float,
+        required=True,
+        help="Launch-day non-propellant rocket mass scale relative to the robustness baseline.",
+    )
     parser.add_argument("--downsample", type=int, default=4)
     parser.add_argument("--seq-len", type=int, default=100)
     parser.add_argument("--pred-len", type=int, default=100)
@@ -227,13 +247,16 @@ def resolve_paths(args: argparse.Namespace) -> None:
     elif args.scaler_npz is not None:
         args.scaler_npz = args.scaler_npz.expanduser().resolve()
 
-    config_root = args.repo / "source_model" / "R7_SIMLE" / "R7_OUTPUT"
     if args.parameters is None:
-        args.parameters = config_root / "parameters.json"
+        args.parameters = (
+            args.repo / "source_model" / "R7_SIMLE" / "R7_ROBUSTNESS" / "parameters.json"
+        )
     else:
         args.parameters = args.parameters.expanduser().resolve()
     if args.thrust_curve is None:
-        args.thrust_curve = config_root / "thrust_source.csv"
+        args.thrust_curve = (
+            args.repo / "source_model" / "R7_SIMLE" / "R7_OUTPUT" / "thrust_source.csv"
+        )
     else:
         args.thrust_curve = args.thrust_curve.expanduser().resolve()
 
@@ -245,6 +268,11 @@ def resolve_paths(args: argparse.Namespace) -> None:
     else:
         args.output_dir = args.output_dir.expanduser().resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not 0.0 < args.oxidizer_fraction <= 1.0:
+        raise ValueError("--oxidizer-fraction must be in (0, 1].")
+    if args.pressure_scale <= 0.0 or args.rocket_mass_scale <= 0.0:
+        raise ValueError("--pressure-scale and --rocket-mass-scale must be positive.")
 
 
 def parse_axis_map(text: str) -> list[tuple[int, float]]:
@@ -276,10 +304,16 @@ def load_real_flight(args: argparse.Namespace) -> tuple[np.ndarray, np.ndarray, 
     source_inputs = data[SENSOR_COLUMNS].to_numpy(dtype=np.float32)
     acc_map = parse_axis_map(args.acc_axis_map)
     gyro_map = parse_axis_map(args.gyro_axis_map)
-    inputs = np.empty_like(source_inputs, dtype=np.float32)
-    inputs[:, :3] = apply_axis_map(source_inputs[:, :3], acc_map)
-    inputs[:, 3:6] = apply_axis_map(source_inputs[:, 3:6], gyro_map)
-    inputs[:, 6:] = source_inputs[:, 6:]
+    mapped_sensors = np.empty_like(source_inputs, dtype=np.float32)
+    mapped_sensors[:, :3] = apply_axis_map(source_inputs[:, :3], acc_map)
+    mapped_sensors[:, 3:6] = apply_axis_map(source_inputs[:, 3:6], gyro_map)
+    mapped_sensors[:, 6:] = source_inputs[:, 6:]
+    condition = np.array(
+        [args.oxidizer_fraction, args.pressure_scale, args.rocket_mass_scale],
+        dtype=np.float32,
+    )
+    conditions = np.broadcast_to(condition, (len(mapped_sensors), len(condition))).copy()
+    inputs = np.concatenate([mapped_sensors, conditions], axis=1)
 
     position_z = data[Z_POSITION_COLUMN].to_numpy(dtype=np.float32)
     acceleration_z = data[Z_ACCELERATION_COLUMN].to_numpy(dtype=np.float32)
@@ -333,19 +367,25 @@ def load_scalers(args: argparse.Namespace, calculate_x_b, parameters, thrust_cur
     if args.scaler_npz is not None and args.scaler_npz.exists():
         scalers = np.load(args.scaler_npz)
         metadata = {"source": str(args.scaler_npz), "reconstructed": False}
-        return (
+        result = (
             scalers["mean_in"].astype(np.float32),
             scalers["std_in"].astype(np.float32),
             scalers["mean_xs"].astype(np.float32),
             scalers["std_xs"].astype(np.float32),
             metadata,
         )
+        if result[0].shape != (len(INPUT_COLUMNS),):
+            raise ValueError(
+                f"Scaler input schema has {result[0].size} columns, but this conditioned "
+                f"evaluation requires {len(INPUT_COLUMNS)}: {INPUT_COLUMNS}"
+            )
+        return result
     if args.scaler_data_dir is None:
         raise FileNotFoundError(
             "No scaler file found. Pass --scaler-npz or --scaler-data-dir. "
             f"Default scaler path was: {args.scaler_npz}"
         )
-    mean_in, std_in, mean_xs, std_xs, metadata = compute_scalers(
+    mean_in, std_in, _mean_acc, _std_acc, mean_xs, std_xs, metadata = compute_scalers(
         args, calculate_x_b, parameters, thrust_curve, sampling_rate
     )
     metadata["source"] = str(args.scaler_data_dir)
@@ -449,6 +489,7 @@ def make_windows(
         "initial_velocity_z": (position_z[previous] - position_z[before_previous]) / dt,
         "initial_time": times[previous],
         "previous_acceleration_z": acceleration_z[previous],
+        "condition_context": inputs[previous, -len(CONDITION_COLUMNS) :],
     }
 
 
@@ -467,7 +508,7 @@ def predict_for_windows(
     windows: dict[str, np.ndarray],
     pred_len: int,
 ) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-    residual_norm = predict_residual(
+    residual_norm = predict_normalized(
         model,
         windows["input_windows"],
         mean_in,
@@ -484,6 +525,7 @@ def predict_for_windows(
         parameters,
         thrust_curve,
         sampling_rate,
+        windows["condition_context"],
     )
     base_z = base[:, :, 2]
     hybrid_acc_z = residual[:, :, 2] + base_z
@@ -678,6 +720,7 @@ def write_summary(args: argparse.Namespace, summary: dict, rows: list[dict], wor
         "REAL FLIGHT REPLAY SUMMARY - Z AXIS ONLY",
         f"Flight: {summary['flight']}",
         f"Model: {summary['model']}",
+        f"Launch conditions: {summary['launch_conditions']}",
         f"Rows after downsampling: {summary['rows_after_downsample']:,}",
         f"Downsample: {summary['downsample']}  dt_median={summary['dt_median_s']:.5f}s",
         f"Prediction window: {main['horizon_samples']} samples "
@@ -950,6 +993,12 @@ def main() -> int:
     log(f"Model: {args.model}")
     log(f"Downsample: {args.downsample}")
     log(f"Axis maps: acc={args.acc_axis_map}, gyro={args.gyro_axis_map}")
+    log(
+        "Launch conditions: "
+        f"oxidizer_fraction={args.oxidizer_fraction:.6f}, "
+        f"pressure_scale={args.pressure_scale:.6f}, "
+        f"rocket_mass_scale={args.rocket_mass_scale:.6f}"
+    )
 
     GRU, calculate_x_b, load_parameters, load_thrust_curve = configure_imports(args.repo)
     parameters = load_parameters(args.parameters)
@@ -973,7 +1022,11 @@ def main() -> int:
     mean_in, std_in, mean_xs, std_xs, scaler_meta = load_scalers(
         args, calculate_x_b, parameters, thrust_curve, sampling_rate
     )
-    model = load_network(GRU, args, device, gpu_ids)
+    if inputs.shape[1] != len(mean_in):
+        raise RuntimeError(
+            f"Real-flight input has {inputs.shape[1]} columns but the scaler has {len(mean_in)}."
+        )
+    model = load_network(GRU, args, device, gpu_ids, input_size=len(mean_in))
 
     start_time = time.time()
     main_summary, rows, worst = evaluate_horizon(
@@ -1043,6 +1096,11 @@ def main() -> int:
         "position_threshold_m": args.position_threshold,
         "acc_threshold": args.acc_threshold,
         "axis_maps": {"acc": args.acc_axis_map, "gyro": args.gyro_axis_map},
+        "launch_conditions": {
+            "Scenario_Oxidizer_Fraction": args.oxidizer_fraction,
+            "Scenario_Pressure_Scale": args.pressure_scale,
+            "Scenario_Rocket_Mass_Scale": args.rocket_mass_scale,
+        },
         "device": str(device),
         "scaler_metadata": scaler_meta,
         "runtime_seconds": time.time() - start_time,

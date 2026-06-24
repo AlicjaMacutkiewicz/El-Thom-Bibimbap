@@ -364,6 +364,18 @@ class ModelSpec:
     output_mode: str  # "direct" predicts total acceleration, "residual" predicts x_total - x_b
 
 
+class PredictionOnly(torch.nn.Module):
+    """Hide the recurrent state from DataParallel's batch-dimension gather."""
+
+    def __init__(self, model: torch.nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, *args, **kwargs):
+        prediction, _hidden = self.model(*args, **kwargs)
+        return prediction
+
+
 def method_key(method: str) -> str:
     key = "".join(character.lower() if character.isalnum() else "_" for character in method)
     return "_".join(part for part in key.split("_") if part)
@@ -587,7 +599,7 @@ def load_network(
     model.eval()
     model.to(device)
     if len(gpu_ids) > 1:
-        model = torch.nn.DataParallel(model, device_ids=gpu_ids)
+        model = torch.nn.DataParallel(PredictionOnly(model), device_ids=gpu_ids)
         log(f"Model inference will use DataParallel across GPUs {gpu_ids}.")
     model.eval()
     return model
@@ -681,7 +693,8 @@ def predict_normalized(
             normalized = ((inputs[start : start + batch_size] - mean_in) / std_in).astype(np.float32)
             tensor = torch.from_numpy(normalized).to(device, non_blocking=True)
             with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=amp_enabled):
-                prediction, _ = model(tensor, pred_len=pred_len)
+                result = model(tensor, pred_len=pred_len)
+                prediction = result[0] if isinstance(result, tuple) else result
             outputs.append(prediction.float().cpu().numpy())
     return np.concatenate(outputs, axis=0)
 
@@ -1420,7 +1433,7 @@ def render_plots(
     shown = worst[: min(3, len(worst))]
     trajectory_methods = [
         method
-        for method in summary["neural_methods"] + ["Polynomial", "RK4 only"]
+        for method in summary["neural_methods"] + ["Polynomial", "RK4 only", "Last acceleration"]
         if shown and method in shown[0].predictions
     ]
     fig, axes = plt.subplots(len(shown), 3, figsize=(16, 3.8 * len(shown)), squeeze=False)
@@ -1449,7 +1462,7 @@ def render_plots(
     requested = [0.25, 0.5, 1.0, args.threshold]
     illustrative_methods = [
         method
-        for method in summary["neural_methods"] + ["Polynomial", "RK4 only"]
+        for method in summary["neural_methods"] + ["Polynomial", "RK4 only", "Last acceleration"]
         if illustrative and method in illustrative[0].predictions
     ]
     for row_index, (target, item) in enumerate(zip(requested, illustrative, strict=False)):
