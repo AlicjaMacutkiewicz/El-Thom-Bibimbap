@@ -48,6 +48,7 @@ from evaluate_gru import (  # noqa: E402  # type: ignore
     GRU_RK4_PHYS_GATE_METHOD,
     GRU_RK4_PHYS_METHOD,
     INPUT_COLUMNS,
+    LAST_ACC_GRU_METHOD,
     PLAIN_GRU_METHOD,
     SENSOR_COLUMNS,
     ModelSpec,
@@ -68,6 +69,7 @@ POSITION_METHODS = [
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
     GRU_RK4_PHYS_GATE_METHOD,
+    LAST_ACC_GRU_METHOD,
     "Polynomial",
     "RK4 only",
     "Last acceleration",
@@ -78,6 +80,7 @@ ACCELERATION_METHODS = [
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
     GRU_RK4_PHYS_GATE_METHOD,
+    LAST_ACC_GRU_METHOD,
     "RK4 only",
     "Last acceleration",
 ]
@@ -86,6 +89,7 @@ COLORS = {
     GRU_RK4_METHOD: "#d62728",
     GRU_RK4_PHYS_METHOD: "#8c564b",
     GRU_RK4_PHYS_GATE_METHOD: "#e377c2",
+    LAST_ACC_GRU_METHOD: "#7f7f7f",
     "Polynomial": "#1f77b4",
     "RK4 only": "#9467bd",
     "Last acceleration": "#ff7f0e",
@@ -179,6 +183,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Persistence-gated residual GRU checkpoint with trajectory-consistency loss.",
+    )
+    parser.add_argument(
+        "--last-acc-gru-model",
+        type=Path,
+        default=None,
+        help="Last-acceleration residual GRU checkpoint with a learned correction gate.",
     )
     parser.add_argument(
         "--scaler-npz",
@@ -284,6 +294,11 @@ def resolve_paths(args: argparse.Namespace) -> None:
         args.gru_res_phys_gate_model = resolve_model_path(
             args.gru_res_phys_gate_model,
             model_root / "gru_res_phys_persist_gate.pth",
+        )
+    if args.last_acc_gru_model is not None:
+        args.last_acc_gru_model = resolve_model_path(
+            args.last_acc_gru_model,
+            model_root / "last_acc_gru.pth",
         )
 
     if args.scaler_npz is None:
@@ -622,6 +637,11 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
                 GRU_RK4_PHYS_GATE_METHOD,
                 args.gru_res_phys_gate_model,
                 "persistence_gated_residual",
+            ),
+            (
+                LAST_ACC_GRU_METHOD,
+                args.last_acc_gru_model,
+                "last_acc_gated_delta",
             ),
         ]
         if path is not None

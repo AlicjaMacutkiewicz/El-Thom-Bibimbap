@@ -120,3 +120,17 @@ class PersistenceGatedGRU(GRU):
         with torch.no_grad():
             self.fc.weight[3:].zero_()
             self.fc.bias[3:].fill_(gate_bias)
+
+
+class LastAccelerationGatedGRU(PersistenceGatedGRU):
+    """GRU head for gated corrections around the persistence baseline.
+
+    The architecture is intentionally the same as PersistenceGatedGRU: three
+    learned acceleration-delta channels and three gate logits. The difference is
+    semantic and handled in the loss/evaluation code:
+
+        a_hat = a_last + sigmoid(gate) * delta.
+
+    Keeping the same head makes the ablation clean: the model changes its
+    baseline assumption from RK4-residual correction to persistence correction.
+    """

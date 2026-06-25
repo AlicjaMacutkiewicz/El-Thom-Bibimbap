@@ -52,12 +52,14 @@ PLAIN_GRU_METHOD = "Plain GRU"
 GRU_RK4_METHOD = "GRU-RK4"
 GRU_RK4_PHYS_METHOD = "GRU-RK4 + physics"
 GRU_RK4_PHYS_GATE_METHOD = "Gated GRU-RK4 + physics"
+LAST_ACC_GRU_METHOD = "Last-acc GRU"
 BASELINE_METHODS = ["Polynomial", "RK4 only", "Last acceleration", "Oracle acceleration"]
 COLORS = {
     PLAIN_GRU_METHOD: "#17becf",
     GRU_RK4_METHOD: "#d62728",
     GRU_RK4_PHYS_METHOD: "#8c564b",
     GRU_RK4_PHYS_GATE_METHOD: "#e377c2",
+    LAST_ACC_GRU_METHOD: "#7f7f7f",
     "Polynomial": "#1f77b4",
     "RK4 only": "#9467bd",
     "Last acceleration": "#ff7f0e",
@@ -103,6 +105,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Persistence-gated residual GRU checkpoint with trajectory-consistency loss.",
+    )
+    parser.add_argument(
+        "--last-acc-gru-model",
+        type=Path,
+        default=None,
+        help="Last-acceleration residual GRU checkpoint with a learned correction gate.",
     )
     parser.add_argument(
         "--scaler-data-dir",
@@ -219,6 +227,8 @@ def resolve_paths(args: argparse.Namespace) -> None:
     args.gru_res_phys_model = args.gru_res_phys_model.expanduser().resolve()
     if args.gru_res_phys_gate_model is not None:
         args.gru_res_phys_gate_model = args.gru_res_phys_gate_model.expanduser().resolve()
+    if args.last_acc_gru_model is not None:
+        args.last_acc_gru_model = args.last_acc_gru_model.expanduser().resolve()
     args.model = args.gru_res_phys_model
     if args.output_dir is None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -405,6 +415,14 @@ def configured_model_specs(args: argparse.Namespace) -> list[ModelSpec]:
                 "persistence_gated_residual",
             )
         )
+    if args.last_acc_gru_model is not None:
+        candidates.append(
+            ModelSpec(
+                LAST_ACC_GRU_METHOD,
+                args.last_acc_gru_model,
+                "last_acc_gated_delta",
+            )
+        )
     specs: list[ModelSpec] = []
     missing: list[ModelSpec] = []
     for spec in candidates:
@@ -435,6 +453,7 @@ def acceleration_method_order(model_specs: list[ModelSpec]) -> list[str]:
 
 def primary_method(model_specs: list[ModelSpec]) -> str:
     for preferred in [
+        LAST_ACC_GRU_METHOD,
         GRU_RK4_PHYS_GATE_METHOD,
         GRU_RK4_PHYS_METHOD,
         GRU_RK4_METHOD,
@@ -783,6 +802,16 @@ def predict_model_accelerations(
             gate = 1.0 / (1.0 + np.exp(-gate_logits))
             anchor = np.repeat(last_acceleration[:, None, :], pred_len, axis=1)
             predictions[spec.name] = anchor + gate * (learned_candidate - anchor)
+        elif spec.output_mode == "last_acc_gated_delta":
+            if normalized.shape[-1] != 6:
+                raise ValueError(f"{spec.name} must emit 3 acceleration deltas and 3 gate logits.")
+            if last_acceleration is None:
+                raise ValueError(f"{spec.name} requires the last observed acceleration.")
+            delta = normalized[:, :, :3] * std_acc
+            gate_logits = np.clip(normalized[:, :, 3:6], -30.0, 30.0)
+            gate = 1.0 / (1.0 + np.exp(-gate_logits))
+            anchor = np.repeat(last_acceleration[:, None, :], pred_len, axis=1)
+            predictions[spec.name] = anchor + gate * delta
         else:
             raise ValueError(f"Unknown output mode for {spec.name}: {spec.output_mode}")
     return predictions

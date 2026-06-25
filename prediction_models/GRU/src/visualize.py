@@ -80,8 +80,13 @@ def plot_prediction(
         # forward pass through the GRU to get the predicted residual (x_s)
         raw_prediction, _ = model(input_seq, pred_len=pred_len)
 
-        # GRU output is a normalized residual — denormalize with residual stats
-        predicted_x_s_denorm = raw_prediction[0, :, :3].cpu().numpy() * std_xs + mean_xs
+        # For residual models, the first three outputs are normalized residuals.
+        # For last_acc_gru, they are normalized acceleration deltas around the
+        # persistence baseline, so only the active target std is applied.
+        if model_type == "last_acc_gru":
+            predicted_x_s_denorm = raw_prediction[0, :, :3].cpu().numpy() * std_xs
+        else:
+            predicted_x_s_denorm = raw_prediction[0, :, :3].cpu().numpy() * std_xs + mean_xs
 
         # Targets/history use the active model target scaler supplied as mean_xs/std_xs.
         target_denorm = target.cpu().numpy() * std_xs + mean_xs
@@ -91,12 +96,17 @@ def plot_prediction(
         base_acc = calculate_x_b_conditioned(
             target_times, parameters, thrust_curve, sampling_rate, condition
         )[0]
-        learned_candidate = predicted_x_s_denorm + base_acc
         if model_type == "gru_res_phys_persist_gate":
+            learned_candidate = predicted_x_s_denorm + base_acc
             gate = torch.sigmoid(raw_prediction[0, :, 3:6]).cpu().numpy()
             anchor = history_denorm[-1:, :3]
             prediction = anchor + gate * (learned_candidate - anchor)
+        elif model_type == "last_acc_gru":
+            gate = torch.sigmoid(raw_prediction[0, :, 3:6]).cpu().numpy()
+            anchor = history_denorm[-1:, :3]
+            prediction = anchor + gate * predicted_x_s_denorm
         else:
+            learned_candidate = predicted_x_s_denorm + base_acc
             prediction = learned_candidate
         rk4_baseline = base_acc
         last_value_baseline = np.repeat(history_denorm[-1:, :3], pred_len, axis=0)

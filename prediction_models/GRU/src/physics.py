@@ -505,35 +505,44 @@ class TotalLoss(nn.Module):
         denorm_initial_pos = initial_pos_batch * self.std_pos.to(device) + self.mean_pos.to(device)
         denorm_initial_vel = initial_vel_batch * self.std_pos.to(device)
 
-        if self.model_type == "gru_res_phys_persist_gate":
+        if self.model_type in {"gru_res_phys_persist_gate", "last_acc_gru"}:
             if preds.shape[-1] != 6:
                 raise ValueError(
-                    "gru_res_phys_persist_gate expects 6 outputs: 3 residuals + 3 gate logits."
+                    f"{self.model_type} expects 6 outputs: 3 acceleration channels + 3 gate logits."
                 )
             if anchor_acc_batch is None:
                 raise ValueError(
-                    "gru_res_phys_persist_gate requires the last observed acceleration anchor."
+                    f"{self.model_type} requires the last observed acceleration anchor."
                 )
 
-            residual = (
-                preds[:, :, :3] * self.target_std.to(device) + self.target_mean.to(device)
-            )
             gate = torch.sigmoid(preds[:, :, 3:6])
-            x_b_numpy = calculate_x_b_conditioned(
-                t_batch,
-                self.acc_loss.parameters,
-                self.acc_loss.thrust_curve,
-                self.acc_loss.sampling_rate,
-                condition_batch,
-            )
-            x_b = torch.as_tensor(x_b_numpy, dtype=preds.dtype, device=device)
-            learned_candidate = x_b + residual
             anchor = (
                 anchor_acc_batch[:, :3] * self.target_std.to(device)
                 + self.target_mean.to(device)
             )
-            anchor_sequence = anchor[:, None, :].expand_as(learned_candidate)
-            predicted_total = anchor_sequence + gate * (learned_candidate - anchor_sequence)
+            if self.model_type == "gru_res_phys_persist_gate":
+                residual = (
+                    preds[:, :, :3] * self.target_std.to(device) + self.target_mean.to(device)
+                )
+                x_b_numpy = calculate_x_b_conditioned(
+                    t_batch,
+                    self.acc_loss.parameters,
+                    self.acc_loss.thrust_curve,
+                    self.acc_loss.sampling_rate,
+                    condition_batch,
+                )
+                x_b = torch.as_tensor(x_b_numpy, dtype=preds.dtype, device=device)
+                learned_candidate = x_b + residual
+                anchor_sequence = anchor[:, None, :].expand_as(learned_candidate)
+                predicted_total = anchor_sequence + gate * (learned_candidate - anchor_sequence)
+            else:
+                # Last-acceleration GRU predicts a correction around the strongest
+                # local baseline. The first three outputs are normalized delta
+                # units, so only the target std is applied; adding target_mean
+                # would incorrectly bias the correction away from zero.
+                learned_delta = preds[:, :, :3] * self.target_std.to(device)
+                anchor_sequence = anchor[:, None, :].expand_as(learned_delta)
+                predicted_total = anchor_sequence + gate * learned_delta
 
             predicted_position, _ = integrate_acceleration(
                 predicted_total,

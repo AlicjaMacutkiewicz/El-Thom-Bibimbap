@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import torch.optim as optim
 from data_loader import INPUT_COLUMNS, make_sequences, read_flight_data, split_flights
-from GRU_model import GRU, PersistenceGatedGRU
+from GRU_model import GRU, LastAccelerationGatedGRU, PersistenceGatedGRU
 from physics import (
     TotalLoss,
     calculate_x_b_conditioned,
@@ -49,7 +49,13 @@ def parse_args():
     parser.add_argument("--resume-from", type=str, default=None)
     parser.add_argument(
         "--model-type",
-        choices=["gru", "gru_res", "gru_res_phys", "gru_res_phys_persist_gate"],
+        choices=[
+            "gru",
+            "gru_res",
+            "gru_res_phys",
+            "gru_res_phys_persist_gate",
+            "last_acc_gru",
+        ],
         default="gru_res_phys",
     )
     parser.add_argument(
@@ -145,7 +151,7 @@ def main():
     print(f"residual stats — mean_xs: {mean_xs},  std_xs: {std_xs}")
     print(f"x_total  stats — mean_acc: {mean_acc}, std_acc: {std_acc}")
 
-    if args.model_type == "gru":
+    if args.model_type in {"gru", "last_acc_gru"}:
         target_mean = mean_acc
         target_std = std_acc
     else: # Residual and persistence-gated variants use the residual scaler.
@@ -271,8 +277,15 @@ def main():
     )
 
     # model init and training
-    model_class = PersistenceGatedGRU if args.model_type == "gru_res_phys_persist_gate" else GRU
-    output_size = 6 if args.model_type == "gru_res_phys_persist_gate" else 3
+    if args.model_type == "gru_res_phys_persist_gate":
+        model_class = PersistenceGatedGRU
+        output_size = 6
+    elif args.model_type == "last_acc_gru":
+        model_class = LastAccelerationGatedGRU
+        output_size = 6
+    else:
+        model_class = GRU
+        output_size = 3
     model = model_class(
         input_size=X_train.shape[-1],
         hidden_size=64,
@@ -327,14 +340,18 @@ def main():
         batch_size=args.batch_size,
         training_rounds=args.training_rounds,
         pred_len=pred_len,
-        checkpoint_prefix=(
-            "gated_" if args.model_type == "gru_res_phys_persist_gate" else ""
-        ),
+        checkpoint_prefix={
+            "gru_res_phys_persist_gate": "gated_",
+            "last_acc_gru": "last_acc_",
+        }.get(args.model_type, ""),
     )
 
     # visualization and saving
 
-    model_prefix = "gated_" if args.model_type == "gru_res_phys_persist_gate" else ""
+    model_prefix = {
+        "gru_res_phys_persist_gate": "gated_",
+        "last_acc_gru": "last_acc_",
+    }.get(args.model_type, "")
     model_filename = (
         f"{model_prefix}gru_model_rounds{args.training_rounds}_seq{args.seq_len}.pth"
     )
