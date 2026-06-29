@@ -20,6 +20,9 @@ ablation test:
 * GRU-RK4 + physics.
 
 It also reports the non-learning baselines used in the synthetic evaluation.
+The vertical UKF baseline is included as a classical state-estimation reference:
+it uses only the observed spin-up altitude and vertical acceleration, then
+propagates without measurement updates during the cut-off interval.
 """
 
 from __future__ import annotations
@@ -67,12 +70,14 @@ Z_POSITION_COLUMN = "Position_Z"
 Z_ACCELERATION_COLUMN = "Acceleration_Z"
 POSITION_COLUMNS = ["Position_X", "Position_Y", "Position_Z"]
 ACCELERATION_COLUMNS = ["Acceleration_X", "Acceleration_Y", "Acceleration_Z"]
+UKF_METHOD = "Vertical UKF"
 POSITION_METHODS = [
     PLAIN_GRU_METHOD,
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
     GRU_RK4_PHYS_GATE_METHOD,
     LAST_ACC_GRU_METHOD,
+    UKF_METHOD,
     "Polynomial",
     "RK4 only",
     "Last acceleration",
@@ -84,6 +89,7 @@ ACCELERATION_METHODS = [
     GRU_RK4_PHYS_METHOD,
     GRU_RK4_PHYS_GATE_METHOD,
     LAST_ACC_GRU_METHOD,
+    UKF_METHOD,
     "RK4 only",
     "Last acceleration",
 ]
@@ -93,6 +99,7 @@ COLORS = {
     GRU_RK4_PHYS_METHOD: "#8c564b",
     GRU_RK4_PHYS_GATE_METHOD: "#e377c2",
     LAST_ACC_GRU_METHOD: "#7f7f7f",
+    UKF_METHOD: "#bcbd22",
     "Polynomial": "#1f77b4",
     "RK4 only": "#9467bd",
     "Last acceleration": "#ff7f0e",
@@ -201,120 +208,43 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate generalized GRU ablation models on one real flight."
     )
     parser.add_argument("--repo", type=Path, default=repo_default)
-    parser.add_argument(
-        "--flight",
-        type=Path,
-        default=repo_default / "far_out_26_data" / "converted" / "flight_far_out_26.parquet",
-        help="Converted real-flight parquet from convert_far_out_csv_to_parquet.py.",
-    )
-    parser.add_argument(
-        "--gru-model",
-        type=Path,
-        default=None,
-        help="Plain GRU direct-acceleration checkpoint.",
-    )
-    parser.add_argument(
-        "--gru-res-model",
-        type=Path,
-        default=None,
-        help="Residual GRU checkpoint without trajectory-consistency loss.",
-    )
-    parser.add_argument(
-        "--gru-res-phys-model",
-        type=Path,
-        default=None,
-        help="Residual GRU checkpoint with trajectory-consistency loss.",
-    )
-    parser.add_argument(
-        "--gru-res-phys-gate-model",
-        type=Path,
-        default=None,
-        help="Persistence-gated residual GRU checkpoint with trajectory-consistency loss.",
-    )
-    parser.add_argument(
-        "--last-acc-gru-model",
-        type=Path,
-        default=None,
-        help="Last-acceleration residual GRU checkpoint with a learned correction gate.",
-    )
-    parser.add_argument(
-        "--scaler-npz",
-        type=Path,
-        default=None,
-        help=(
-            "Scaler file with mean_in/std_in/mean_acc/std_acc/mean_xs/std_xs. "
-            "Defaults to ~/gru_ablation_eval_generalized/reconstructed_scalers.npz."
-        ),
-    )
-    parser.add_argument(
-        "--gnss-trajectory",
-        type=Path,
-        default=None,
-        help=(
-            "Optional coarse GNSS-derived trajectory CSV from far_out_26_data/positionCreator.py. "
-            "When provided, the evaluator adds clearly labeled coarse 3D diagnostics."
-        ),
-    )
+    parser.add_argument("--flight", type=Path, default=repo_default / "far_out_26_data" / "converted" / "flight_far_out_26.parquet")
+    parser.add_argument("--gru-model", type=Path, default=None)
+    parser.add_argument("--gru-res-model", type=Path, default=None)
+    parser.add_argument("--gru-res-phys-model", type=Path, default=None)
+    parser.add_argument("--gru-res-phys-gate-model", type=Path, default=None)
+    parser.add_argument("--last-acc-gru-model", type=Path, default=None)
+    parser.add_argument("--scaler-npz", type=Path, default=None)
+    parser.add_argument("--gnss-trajectory", type=Path, default=None)
     parser.add_argument("--parameters", type=Path, default=None)
     parser.add_argument("--thrust-curve", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, default=None)
-    parser.add_argument(
-        "--oxidizer-fraction",
-        type=float,
-        required=True,
-        help="Launch oxidizer mass divided by the nominal oxidizer mass used by the model.",
-    )
-    parser.add_argument(
-        "--pressure-scale",
-        type=float,
-        required=True,
-        help="Launch-day chamber-pressure/thrust scale relative to nominal.",
-    )
-    parser.add_argument(
-        "--rocket-mass-scale",
-        type=float,
-        required=True,
-        help="Launch-day non-propellant rocket mass scale relative to the robustness baseline.",
-    )
+    parser.add_argument("--oxidizer-fraction", type=float, required=True)
+    parser.add_argument("--pressure-scale", type=float, required=True)
+    parser.add_argument("--rocket-mass-scale", type=float, required=True)
     parser.add_argument("--downsample", type=int, default=4)
     parser.add_argument("--seq-len", type=int, default=100)
     parser.add_argument("--pred-len", type=int, default=100)
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--position-threshold", type=float, default=10.0)
     parser.add_argument("--acc-threshold", type=float, default=5.0)
-    parser.add_argument(
-        "--device",
-        choices=["auto", "cuda", "mps", "cpu"],
-        default="auto",
-        help="auto uses CUDA, then MPS, then CPU.",
-    )
+    parser.add_argument("--no-ukf-baseline", action="store_true")
+    parser.add_argument("--ukf-altitude-std", type=float, default=2.0)
+    parser.add_argument("--ukf-acceleration-std", type=float, default=1.0)
+    parser.add_argument("--ukf-process-jerk-std", type=float, default=4.0)
+    parser.add_argument("--ukf-initial-position-std", type=float, default=5.0,)
+    parser.add_argument("--ukf-initial-velocity-std", type=float, default=30.0)
+    parser.add_argument("--ukf-initial-acceleration-std", type=float, default=10.0)
+    parser.add_argument("--ukf-alpha", type=float, default=0.3)
+    parser.add_argument("--ukf-beta", type=float, default=2.0)
+    parser.add_argument("--ukf-kappa", type=float, default=0.0)
+    parser.add_argument("--device", choices=["auto", "cuda", "mps", "cpu"], default="auto")
     parser.add_argument("--gpu-ids", default="0")
     parser.add_argument("--amp", action="store_true")
-    parser.add_argument(
-        "--min-start-time",
-        type=float,
-        default=0.0,
-        help="Only evaluate windows whose prediction starts at or after this time.",
-    )
-    parser.add_argument(
-        "--max-start-time",
-        type=float,
-        default=None,
-        help="Optional upper bound for evaluated prediction start times.",
-    )
-    parser.add_argument(
-        "--acc-axis-map",
-        default="X,Z,-Y",
-        help=(
-            "Map source acceleration axes into model X/Y/Z. "
-            "Examples: X,Y,Z or X,Z,-Y."
-        ),
-    )
-    parser.add_argument(
-        "--gyro-axis-map",
-        default="X,Z,-Y",
-        help="Map source gyro axes into model X/Y/Z, with the same syntax as --acc-axis-map.",
-    )
+    parser.add_argument("--min-start-time", type=float, default=0.0)
+    parser.add_argument("--max-start-time", type=float, default=None)
+    parser.add_argument("--acc-axis-map", default="X,Z,-Y")
+    parser.add_argument("--gyro-axis-map",default="X,Z,-Y")
     parser.add_argument("--no-plots", action="store_true")
     return parser.parse_args()
 
@@ -384,6 +314,18 @@ def resolve_paths(args: argparse.Namespace) -> None:
         raise ValueError("--oxidizer-fraction must be in (0, 1].")
     if args.pressure_scale <= 0.0 or args.rocket_mass_scale <= 0.0:
         raise ValueError("--pressure-scale and --rocket-mass-scale must be positive.")
+    if args.ukf_alpha <= 0.0:
+        raise ValueError("--ukf-alpha must be positive.")
+    for name in [
+        "ukf_altitude_std",
+        "ukf_acceleration_std",
+        "ukf_process_jerk_std",
+        "ukf_initial_position_std",
+        "ukf_initial_velocity_std",
+        "ukf_initial_acceleration_std",
+    ]:
+        if getattr(args, name) <= 0.0:
+            raise ValueError(f"--{name.replace('_', '-')} must be positive.")
 
 
 def parse_axis_map(text: str) -> list[tuple[int, float]]:
@@ -484,6 +426,7 @@ def make_windows(
         "lookback_times": times[lookback],
         "lookback_positions": positions[lookback],
         "lookback_position_z": positions[lookback, 2],
+        "lookback_acceleration_z": accelerations[lookback, 2],
         "future_times": times[future],
         "actual_positions": positions[future],
         "actual_accelerations": accelerations[future],
@@ -553,6 +496,239 @@ def polynomial_prediction_z(
         + coefficients[:, 1, None] * future
         + coefficients[:, 2, None] * np.square(future)
     ).astype(np.float32)
+
+
+def symmetrize(matrix: np.ndarray) -> np.ndarray:
+    return 0.5 * (matrix + matrix.T)
+
+
+def cholesky_with_jitter(matrix: np.ndarray) -> np.ndarray:
+    symmetric = symmetrize(matrix)
+    jitter = 1e-9
+    identity = np.eye(symmetric.shape[0], dtype=np.float64)
+    for _ in range(8):
+        try:
+            return np.linalg.cholesky(symmetric + jitter * identity)
+        except np.linalg.LinAlgError:
+            jitter *= 10.0
+    return np.linalg.cholesky(symmetric + jitter * identity)
+
+
+def merwe_weights(
+    state_dim: int,
+    alpha: float,
+    beta: float,
+    kappa: float,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    lambda_value = alpha * alpha * (state_dim + kappa) - state_dim
+    scale = state_dim + lambda_value
+    if scale <= 0.0:
+        raise ValueError(
+            "Invalid UKF sigma-point scaling. Increase --ukf-alpha or --ukf-kappa."
+        )
+    mean_weights = np.full(2 * state_dim + 1, 0.5 / scale, dtype=np.float64)
+    cov_weights = mean_weights.copy()
+    mean_weights[0] = lambda_value / scale
+    cov_weights[0] = lambda_value / scale + (1.0 - alpha * alpha + beta)
+    return scale, mean_weights, cov_weights
+
+
+def sigma_points(
+    state: np.ndarray,
+    covariance: np.ndarray,
+    scale: float,
+) -> np.ndarray:
+    state_dim = state.shape[0]
+    root = cholesky_with_jitter(scale * covariance)
+    points = np.empty((2 * state_dim + 1, state_dim), dtype=np.float64)
+    points[0] = state
+    for axis in range(state_dim):
+        points[axis + 1] = state + root[:, axis]
+        points[state_dim + axis + 1] = state - root[:, axis]
+    return points
+
+
+def ukf_transition(points: np.ndarray, dt: float) -> np.ndarray:
+    propagated = points.copy()
+    propagated[:, 0] = points[:, 0] + points[:, 1] * dt + 0.5 * points[:, 2] * dt * dt
+    propagated[:, 1] = points[:, 1] + points[:, 2] * dt
+    propagated[:, 2] = points[:, 2]
+    return propagated
+
+
+def vertical_process_noise(dt: float, process_jerk_std: float) -> np.ndarray:
+    dt = max(float(dt), 1e-6)
+    q = process_jerk_std * process_jerk_std
+    return q * np.array(
+        [
+            [dt**5 / 20.0, dt**4 / 8.0, dt**3 / 6.0],
+            [dt**4 / 8.0, dt**3 / 3.0, dt**2 / 2.0],
+            [dt**3 / 6.0, dt**2 / 2.0, dt],
+        ],
+        dtype=np.float64,
+    )
+
+
+def ukf_predict(
+    state: np.ndarray,
+    covariance: np.ndarray,
+    dt: float,
+    scale: float,
+    mean_weights: np.ndarray,
+    cov_weights: np.ndarray,
+    process_jerk_std: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    points = sigma_points(state, covariance, scale)
+    propagated = ukf_transition(points, dt)
+    predicted_state = mean_weights @ propagated
+    diff = propagated - predicted_state
+    predicted_covariance = diff.T @ (diff * cov_weights[:, None])
+    predicted_covariance += vertical_process_noise(dt, process_jerk_std)
+    return predicted_state, symmetrize(predicted_covariance)
+
+
+def ukf_update(
+    state: np.ndarray,
+    covariance: np.ndarray,
+    measurement: np.ndarray,
+    measurement_covariance: np.ndarray,
+    scale: float,
+    mean_weights: np.ndarray,
+    cov_weights: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    points = sigma_points(state, covariance, scale)
+    measurement_points = points[:, [0, 2]]
+    predicted_measurement = mean_weights @ measurement_points
+    measurement_diff = measurement_points - predicted_measurement
+    state_diff = points - state
+    innovation_covariance = (
+        measurement_diff.T @ (measurement_diff * cov_weights[:, None])
+        + measurement_covariance
+    )
+    cross_covariance = state_diff.T @ (measurement_diff * cov_weights[:, None])
+    gain = cross_covariance @ np.linalg.inv(innovation_covariance)
+    updated_state = state + gain @ (measurement - predicted_measurement)
+    updated_covariance = covariance - gain @ innovation_covariance @ gain.T
+    return updated_state, symmetrize(updated_covariance)
+
+
+def estimate_initial_velocity(time: np.ndarray, altitude: np.ndarray) -> float:
+    count = min(8, len(time))
+    if count < 2:
+        return 0.0
+    local_time = time[:count].astype(np.float64) - float(time[0])
+    if float(local_time[-1]) <= 1e-9:
+        return 0.0
+    slope, _ = np.polyfit(local_time, altitude[:count].astype(np.float64), deg=1)
+    return float(slope)
+
+
+def run_vertical_ukf_window(
+    lookback_time: np.ndarray,
+    lookback_altitude: np.ndarray,
+    lookback_acceleration: np.ndarray,
+    future_time: np.ndarray,
+    args: argparse.Namespace,
+) -> tuple[np.ndarray, np.ndarray]:
+    scale, mean_weights, cov_weights = merwe_weights(
+        state_dim=3,
+        alpha=args.ukf_alpha,
+        beta=args.ukf_beta,
+        kappa=args.ukf_kappa,
+    )
+    measurement_covariance = np.diag(
+        [
+            args.ukf_altitude_std * args.ukf_altitude_std,
+            args.ukf_acceleration_std * args.ukf_acceleration_std,
+        ]
+    ).astype(np.float64)
+    state = np.array(
+        [
+            float(lookback_altitude[0]),
+            estimate_initial_velocity(lookback_time, lookback_altitude),
+            float(lookback_acceleration[0]),
+        ],
+        dtype=np.float64,
+    )
+    covariance = np.diag(
+        [
+            args.ukf_initial_position_std * args.ukf_initial_position_std,
+            args.ukf_initial_velocity_std * args.ukf_initial_velocity_std,
+            args.ukf_initial_acceleration_std * args.ukf_initial_acceleration_std,
+        ]
+    ).astype(np.float64)
+    state, covariance = ukf_update(
+        state,
+        covariance,
+        np.array([lookback_altitude[0], lookback_acceleration[0]], dtype=np.float64),
+        measurement_covariance,
+        scale,
+        mean_weights,
+        cov_weights,
+    )
+
+    previous_time = float(lookback_time[0])
+    for index in range(1, len(lookback_time)):
+        current_time = float(lookback_time[index])
+        state, covariance = ukf_predict(
+            state,
+            covariance,
+            current_time - previous_time,
+            scale,
+            mean_weights,
+            cov_weights,
+            args.ukf_process_jerk_std,
+        )
+        state, covariance = ukf_update(
+            state,
+            covariance,
+            np.array(
+                [lookback_altitude[index], lookback_acceleration[index]],
+                dtype=np.float64,
+            ),
+            measurement_covariance,
+            scale,
+            mean_weights,
+            cov_weights,
+        )
+        previous_time = current_time
+
+    predicted_altitude = np.empty(len(future_time), dtype=np.float32)
+    predicted_acceleration = np.empty(len(future_time), dtype=np.float32)
+    for index, current_time in enumerate(future_time):
+        state, covariance = ukf_predict(
+            state,
+            covariance,
+            float(current_time) - previous_time,
+            scale,
+            mean_weights,
+            cov_weights,
+            args.ukf_process_jerk_std,
+        )
+        predicted_altitude[index] = state[0]
+        predicted_acceleration[index] = state[2]
+        previous_time = float(current_time)
+    return predicted_altitude, predicted_acceleration
+
+
+def vertical_ukf_prediction_z(
+    windows: dict[str, np.ndarray],
+    args: argparse.Namespace,
+) -> tuple[np.ndarray, np.ndarray]:
+    window_count = len(windows["starts"])
+    predicted_position = np.empty((window_count, args.pred_len), dtype=np.float32)
+    predicted_acceleration = np.empty((window_count, args.pred_len), dtype=np.float32)
+    for index in range(window_count):
+        position, acceleration = run_vertical_ukf_window(
+            windows["lookback_times"][index],
+            windows["lookback_position_z"][index],
+            windows["lookback_acceleration_z"][index],
+            windows["future_times"][index],
+            args,
+        )
+        predicted_position[index] = position
+        predicted_acceleration[index] = acceleration
+    return predicted_position, predicted_acceleration
 
 
 def load_gnss_reference(
@@ -776,13 +952,17 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         if not spec.path.exists():
             raise FileNotFoundError(f"{spec.name} checkpoint not found: {spec.path}")
     neural_methods = [spec.name for spec in model_specs]
-    position_methods = neural_methods + [  # noqa: RUF005
+    ukf_methods = [] if args.no_ukf_baseline else [UKF_METHOD]
+    position_methods = neural_methods + ukf_methods + [
         "Polynomial",
         "RK4 only",
         "Last acceleration",
         "Oracle acceleration",
     ]
-    acceleration_methods = neural_methods + ["RK4 only", "Last acceleration"]  # noqa: RUF005
+    acceleration_methods = neural_methods + ukf_methods + [
+        "RK4 only",
+        "Last acceleration",
+    ]
 
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs = load_scalers(args.scaler_npz)
     device, gpu_ids = select_device(args)
@@ -866,6 +1046,12 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
     acceleration_predictions: dict[str, np.ndarray] = {
         spec.name: model_acc_3d[spec.name][:, :, 2] for spec in model_specs
     }
+    ukf_position_z: np.ndarray | None = None
+    ukf_acceleration_z: np.ndarray | None = None
+    if not args.no_ukf_baseline:
+        ukf_position_z, ukf_acceleration_z = vertical_ukf_prediction_z(windows, args)
+        acceleration_predictions[UKF_METHOD] = ukf_acceleration_z
+
     last_acc_3d = np.repeat(
         windows["previous_accelerations"][:, None, :],
         args.pred_len,
@@ -887,6 +1073,8 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         )
         for method, acceleration in acceleration_predictions.items()
     }
+    if ukf_position_z is not None:
+        position_predictions[UKF_METHOD] = ukf_position_z
     position_predictions["Polynomial"] = polynomial_prediction_z(
         windows["lookback_times"],
         windows["lookback_position_z"],
@@ -941,10 +1129,11 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
     position_metrics = {method: OneDimMetric() for method in position_methods}
     acceleration_metrics = {method: OneDimMetric() for method in acceleration_methods}
     coarse_gnss_3d_metrics = (
-        {method: ThreeDimMetric() for method in position_methods}
+        {method: ThreeDimMetric() for method in position_methods if method in position_predictions_3d}
         if gnss_reference_positions is not None
         else {}
     )
+    coarse_gnss_3d_methods = list(coarse_gnss_3d_metrics.keys())
     window_rmse_by_method: dict[str, np.ndarray] = {}
     acc_rmse_by_method: dict[str, np.ndarray] = {}
     coarse_gnss_3d_rmse_by_method: dict[str, np.ndarray] = {}
@@ -954,7 +1143,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
             windows["actual_position_z"],
             args.position_threshold,
         )
-        if gnss_reference_positions is not None:
+        if gnss_reference_positions is not None and method in position_predictions_3d:
             coarse_gnss_3d_rmse_by_method[method] = coarse_gnss_3d_metrics[method].add(
                 position_predictions_3d[method],
                 gnss_reference_positions,
@@ -983,6 +1172,8 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
                 - windows["actual_position_z"][index, -1]
             )
             if gnss_reference_positions is not None:
+                if method not in position_predictions_3d:
+                    continue
                 row[f"{key}_coarse_gnss_3d_window_rmse_m"] = float(
                     coarse_gnss_3d_rmse_by_method[method][index]
                 )
@@ -1005,6 +1196,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         ],
         "position_methods": position_methods,
         "acceleration_methods": acceleration_methods,
+        "coarse_gnss_3d_methods": coarse_gnss_3d_methods,
         "parameters": str(args.parameters),
         "thrust_curve": str(args.thrust_curve),
         "scaler_npz": str(args.scaler_npz),
@@ -1031,6 +1223,22 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         "windows_evaluated": len(windows["starts"]),
         "position_threshold_m": args.position_threshold,
         "acc_threshold": args.acc_threshold,
+        "ukf_baseline": None
+        if args.no_ukf_baseline
+        else {
+            "state": ["z", "vz", "az"],
+            "measurements_during_spin_up": ["z", "az"],
+            "cut_off_behavior": "predict-only propagation with no future measurement updates",
+            "altitude_std_m": args.ukf_altitude_std,
+            "acceleration_std_mps2": args.ukf_acceleration_std,
+            "process_jerk_std_mps3": args.ukf_process_jerk_std,
+            "initial_position_std_m": args.ukf_initial_position_std,
+            "initial_velocity_std_mps": args.ukf_initial_velocity_std,
+            "initial_acceleration_std_mps2": args.ukf_initial_acceleration_std,
+            "alpha": args.ukf_alpha,
+            "beta": args.ukf_beta,
+            "kappa": args.ukf_kappa,
+        },
         "position_z_metrics": {
             method: position_metrics[method].summarize() for method in position_methods
         },
@@ -1039,7 +1247,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         },
         "coarse_gnss_3d_metrics": {
             method: coarse_gnss_3d_metrics[method].summarize()
-            for method in position_methods
+            for method in coarse_gnss_3d_methods
         }
         if gnss_reference_positions is not None
         else {},
@@ -1113,6 +1321,19 @@ def write_outputs(
         f"Position threshold: >{summary['position_threshold_m']:.1f} m window RMSE",
         f"Acceleration threshold: >{summary['acc_threshold']:.1f} window RMSE",
     ]
+    if summary.get("ukf_baseline"):
+        ukf = summary["ukf_baseline"]
+        lines.extend(
+            [
+                "",
+                "Vertical UKF baseline:",
+                "  state=[z, vz, az], measurements during spin-up=[z, az], "
+                "cut-off=predict-only",
+                f"  measurement std: altitude={ukf['altitude_std_m']:.3g} m, "
+                f"acceleration={ukf['acceleration_std_mps2']:.3g} m/s^2",
+                f"  process jerk std={ukf['process_jerk_std_mps3']:.3g} m/s^3",
+            ]
+        )
     if has_coarse_gnss:
         reference = summary["coarse_gnss_reference"]
         lines.extend(
@@ -1139,7 +1360,7 @@ def write_outputs(
         )
     if has_coarse_gnss:
         lines.extend(["", "COARSE GNSS-DERIVED 3D POSITION METRICS"])
-        for method in summary["position_methods"]:
+        for method in summary["coarse_gnss_3d_methods"]:
             item = summary["coarse_gnss_3d_metrics"][method]
             lines.append(
                 f"{method:20s} point_RMSE={item['point_rmse_m']:.3f} m  "
@@ -1165,6 +1386,7 @@ def write_outputs(
             "",
             "INTERPRETATION WARNING",
             "This is a real-flight proof-of-concept replay using vertical telemetry-derived references.",
+            "The vertical UKF is a classical Z-axis state-estimation baseline, not a trained model.",
             "Coarse GNSS-derived X/Y/Z diagnostics are approximate and do not validate exact full 3D trajectory accuracy.",
             "The envelope plots summarize overlapping forecast windows; they are not calibrated uncertainty intervals.",
         ]
@@ -1237,7 +1459,9 @@ def render_plots(
     if summary.get("coarse_gnss_3d_metrics"):
         coarse_3d = summary["coarse_gnss_3d_metrics"]
         comparison_3d = [
-            method for method in summary["position_methods"] if method != "Oracle acceleration"
+            method
+            for method in summary["coarse_gnss_3d_methods"]
+            if method != "Oracle acceleration"
         ]
         fig, axes = plt.subplots(1, 2, figsize=(14, 5))
         axes[0].bar(
@@ -1269,6 +1493,7 @@ def render_plots(
         for method in [
             GRU_RK4_PHYS_GATE_METHOD,
             LAST_ACC_GRU_METHOD,
+            UKF_METHOD,
             GRU_RK4_PHYS_METHOD,
             GRU_RK4_METHOD,
             PLAIN_GRU_METHOD,
@@ -1294,6 +1519,7 @@ def render_plots(
         for method in [
             GRU_RK4_PHYS_GATE_METHOD,
             LAST_ACC_GRU_METHOD,
+            UKF_METHOD,
             GRU_RK4_PHYS_METHOD,
             GRU_RK4_METHOD,
             PLAIN_GRU_METHOD,
