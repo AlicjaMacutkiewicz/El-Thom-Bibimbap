@@ -905,6 +905,7 @@ def evaluate(
     illustrative_targets = [0.25, 0.5, 1.0, args.threshold]
     illustrative: dict[float, PlotWindow] = {}
     total_windows = 0
+    dt_medians: list[float] = []
     start_time = time.time()
     for sequence, path in enumerate(files, 1):
         try:
@@ -917,6 +918,8 @@ def evaluate(
         if not len(starts):
             skipped.append({"file": str(path), "error": "insufficient samples after downsampling"})
             continue
+        if len(times) > 1:
+            dt_medians.append(float(np.median(np.diff(times))))
         input_windows = np.stack([inputs[i - args.seq_len : i] for i in starts])
         condition_context = conditions[starts - 1]
         future_times = np.stack([times[i : i + args.pred_len] for i in starts])
@@ -1047,6 +1050,16 @@ def evaluate(
         "skipped_files": skipped,
         "windows_evaluated": total_windows,
         "threshold_m": args.threshold,
+        "seq_len": args.seq_len,
+        "pred_len": args.pred_len,
+        "downsample": args.downsample,
+        "dt_seconds_median": float(np.median(dt_medians)) if dt_medians else None,
+        "history_window_seconds_median": float(max(args.seq_len - 1, 0) * np.median(dt_medians))
+        if dt_medians
+        else None,
+        "prediction_horizon_seconds_median": float(max(args.pred_len - 1, 0) * np.median(dt_medians))
+        if dt_medians
+        else None,
         "input_columns": INPUT_COLUMNS,
         "condition_columns": CONDITION_COLUMNS,
         "runtime_seconds": time.time() - start_time,
@@ -1317,10 +1330,22 @@ def write_outputs(
         f"RK4 parameters: {summary['parameters']}",
         f"RK4 thrust curve: {summary['thrust_curve']}",
         f"Windows evaluated: {summary['windows_evaluated']:,}",
+        f"History window: {summary['seq_len']} samples"
+        + (
+            f" (~{summary['history_window_seconds_median']:.2f}s median)"
+            if summary.get("history_window_seconds_median") is not None
+            else ""
+        ),
+        f"Prediction window: {summary['pred_len']} samples"
+        + (
+            f" (~{summary['prediction_horizon_seconds_median']:.2f}s median)"
+            if summary.get("prediction_horizon_seconds_median") is not None
+            else ""
+        ),
         f"Runtime: {summary['runtime_seconds'] / 60:.2f} minutes",
         f"Failure threshold: >{summary['threshold_m']:.1f} m window RMSE",
         "",
-        "100-STEP POSITION FORECAST METRICS - 3D TRAJECTORY DISTANCE",
+        f"{summary['pred_len']}-STEP POSITION FORECAST METRICS - 3D TRAJECTORY DISTANCE",
     ]
     for method in summary["methods"]:
         item = summary["position_metrics"][method]["3D"]
@@ -1388,6 +1413,7 @@ def render_plots(
     if args.no_plots:
         return
     primary = summary["primary_method"]
+    forecast_label = f"{summary.get('pred_len', args.pred_len)}-step"
     comparison = [
         method
         for method in summary["neural_methods"] + ["Polynomial", "RK4 only", "Last acceleration"]
@@ -1492,7 +1518,7 @@ def render_plots(
         cdf = np.arange(1, len(values) + 1) / len(values)
         ax.plot(values, cdf, label=method, color=COLORS[method], linewidth=2)
     ax.set_xscale("log")
-    ax.set_xlabel("Per-flight mean 100-step 3D distance RMSE (m) - log scale")
+    ax.set_xlabel(f"Per-flight mean {forecast_label} 3D distance RMSE (m) - log scale")
     ax.set_ylabel("Fraction of flights")
     ax.set_title("Per-Flight Error Distribution")
     ax.grid(alpha=0.3)
@@ -1507,7 +1533,7 @@ def render_plots(
     labels = [str(row["file"]).removeprefix("flight_").removesuffix(".parquet") for row in worst_rows][::-1]
     values = [float(row[key]) for row in worst_rows][::-1]
     ax.barh(labels, values, color=COLORS[primary])
-    ax.set_xlabel("Mean 100-step 3D distance RMSE (m)")
+    ax.set_xlabel(f"Mean {forecast_label} 3D distance RMSE (m)")
     ax.set_title(f"30 Hardest Flights for {primary}")
     ax.grid(axis="x", alpha=0.3)
     fig.tight_layout()

@@ -52,12 +52,13 @@ def train_model(
         year (str, optional): Tag for Weights & Biases logging. Defaults to "all".
 
     Returns:
-        tuple: Two lists containing the average training and testing loss per epoch.
+        tuple: Training losses, testing losses, best testing loss, and best checkpoint path.
     """
 
     train_losses = []
     test_losses = []
     best_test_loss = float("inf")
+    best_checkpoint_filename = None
     seq_len = pred_len if seq_len is None else seq_len
     window_tag = f"seq{seq_len}" if seq_len == pred_len else f"seq{seq_len}_pred{pred_len}"
 
@@ -203,7 +204,7 @@ def train_model(
             print(f"best checkpoint: {best_checkpoint_filename} (test loss: {best_test_loss:.8e})")
 
     wandb.finish()
-    return train_losses, test_losses
+    return train_losses, test_losses, best_test_loss, best_checkpoint_filename
 
 
 def evaluate_model(

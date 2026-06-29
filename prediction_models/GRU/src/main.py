@@ -1,4 +1,6 @@
 import argparse
+import json
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -45,9 +47,25 @@ def parse_args():
     parser.add_argument("--training-rounds", type=int, default=10)
     parser.add_argument("--seq-len", type=int, default=200)
     parser.add_argument("--pred-len", type=int, default=None,)
+    parser.add_argument("--hidden-size", type=int, default=64)
+    parser.add_argument("--num-layers", type=int, default=2)
+    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--learning-rate", type=float, default=0.0005)
+    parser.add_argument("--weight-decay", type=float, default=1e-5)
     parser.add_argument("--year", type=str, default="2025")
     parser.add_argument("--downsample", type=int, default=25)
     parser.add_argument("--resume-from", type=str, default=None)
+    parser.add_argument(
+        "--training-summary",
+        type=str,
+        default="training_summary.json",
+        help="Path where machine-readable final training metrics are written.",
+    )
+    parser.add_argument(
+        "--skip-plots",
+        action="store_true",
+        help="Skip diagnostic PNG generation. Useful for hyperparameter sweeps.",
+    )
     parser.add_argument(
         "--model-type",
         choices=[
@@ -107,6 +125,16 @@ def main():
         raise ValueError("--persistence-regret-weight must be non-negative.")
     if args.gate_smooth_weight < 0.0:
         raise ValueError("--gate-smooth-weight must be non-negative.")
+    if args.hidden_size <= 0:
+        raise ValueError("--hidden-size must be positive.")
+    if args.num_layers <= 0:
+        raise ValueError("--num-layers must be positive.")
+    if not 0.0 <= args.dropout < 1.0:
+        raise ValueError("--dropout must be in [0, 1).")
+    if args.learning_rate <= 0.0:
+        raise ValueError("--learning-rate must be positive.")
+    if args.weight_decay < 0.0:
+        raise ValueError("--weight-decay must be non-negative.")
 
     # load physics parameters
     parameters_path, thrust_curve_path = default_physics_paths()
@@ -312,10 +340,10 @@ def main():
         output_size = 3
     model = model_class(
         input_size=X_train.shape[-1],
-        hidden_size=64,
+        hidden_size=args.hidden_size,
         output_size=output_size,
-        num_layers=2,
-        dropout=0.2,
+        num_layers=args.num_layers,
+        dropout=args.dropout,
     )
 
     if args.resume_from:
@@ -336,9 +364,9 @@ def main():
 
     model = model.to(device)
 
-    optimizer = optim.Adam(model.parameters(), lr=0.0005, weight_decay=1e-5)
+    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate, weight_decay=args.weight_decay)
 
-    train_losses, test_losses = train_model(
+    train_losses, test_losses, best_test_loss, best_checkpoint_filename = train_model(
         model,
         X_train,
         condition_train,
@@ -395,6 +423,9 @@ def main():
             "parameters: "
             f"epochs={args.training_rounds}, batch={args.batch_size}, "
             f"seq_len={args.seq_len}, pred_len={pred_len}, year={args.year}, "
+            f"hidden_size={args.hidden_size}, num_layers={args.num_layers}, "
+            f"dropout={args.dropout}, learning_rate={args.learning_rate}, "
+            f"weight_decay={args.weight_decay}, "
             f"lambda_h={args.lambda_h}, "
             f"persistence_regret_weight={args.persistence_regret_weight}, "
             f"gate_smooth_weight={args.gate_smooth_weight}\n"
@@ -403,7 +434,46 @@ def main():
         log_file.write("-" * 40 + "\n")
     print("learning_state.txt updated")
 
+    training_summary = {
+        "model_type": args.model_type,
+        "model_file": str(Path(model_filename).resolve()),
+        "best_checkpoint": str(Path(best_checkpoint_filename).resolve())
+        if best_checkpoint_filename
+        else None,
+        "best_test_loss": float(best_test_loss),
+        "final_train_loss": float(train_losses[-1]) if train_losses else None,
+        "final_test_loss": float(test_losses[-1]) if test_losses else None,
+        "train_losses": [float(value) for value in train_losses],
+        "test_losses": [float(value) for value in test_losses],
+        "epochs": args.training_rounds,
+        "batch_size": args.batch_size,
+        "seq_len": args.seq_len,
+        "pred_len": pred_len,
+        "num_flights": args.num_flights,
+        "start_flight": args.start_flight,
+        "downsample": args.downsample,
+        "hidden_size": args.hidden_size,
+        "num_layers": args.num_layers,
+        "dropout": args.dropout,
+        "learning_rate": args.learning_rate,
+        "weight_decay": args.weight_decay,
+        "lambda_h": args.lambda_h,
+        "persistence_regret_weight": args.persistence_regret_weight,
+        "gate_smooth_weight": args.gate_smooth_weight,
+        "parameters": str(parameters_path),
+        "thrust_curve": str(thrust_curve_path),
+        "flights_loaded": len(flights_inputs),
+    }
+    summary_path = Path(args.training_summary)
+    if summary_path.parent != Path("."):
+        summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(training_summary, indent=2), encoding="utf-8")
+    print(f"training summary saved to {summary_path}")
+
     model_to_save = model.module if isinstance(model, torch.nn.DataParallel) else model
+    if args.skip_plots:
+        print("skipping diagnostic plots (--skip-plots)")
+        return
     plot_losses(train_losses, test_losses)
     diagnostic_sample_indices = sorted(
         {
