@@ -65,6 +65,21 @@ def parse_args():
         default=0.1,
         help="Hinge penalty for gated forecasts whose trajectory is worse than persistence.",
     )
+    parser.add_argument(
+        "--lambda-h",
+        type=float,
+        default=0.2,
+        help="Weight for the integrated trajectory-consistency loss.",
+    )
+    parser.add_argument(
+        "--gate-smooth-weight",
+        type=float,
+        default=0.0,
+        help=(
+            "Penalty on step-to-step changes in the learned gate for gated models. "
+            "Use this to discourage oscillatory gate behavior during cut-off decoding."
+        ),
+    )
     parser.add_argument("--parameters", type=str, default=None)
     parser.add_argument("--thrust-curve", type=str, default=None)
 
@@ -86,6 +101,12 @@ def main():
     pred_len = args.pred_len if args.pred_len is not None else args.seq_len
     if args.seq_len <= 0 or pred_len <= 0:
         raise ValueError("--seq-len and --pred-len must be positive integers.")
+    if args.lambda_h < 0.0:
+        raise ValueError("--lambda-h must be non-negative.")
+    if args.persistence_regret_weight < 0.0:
+        raise ValueError("--persistence-regret-weight must be non-negative.")
+    if args.gate_smooth_weight < 0.0:
+        raise ValueError("--gate-smooth-weight must be non-negative.")
 
     # load physics parameters
     parameters_path, thrust_curve_path = default_physics_paths()
@@ -180,9 +201,10 @@ def main():
         mean_pos,
         std_pos,
         sampling_rate,
-        lambda_h=0.2,
+        lambda_h=args.lambda_h,
         model_type=args.model_type,
         lambda_regret=args.persistence_regret_weight,
+        lambda_gate_smooth=args.gate_smooth_weight,
     ).to(device)
 
     (
@@ -372,7 +394,10 @@ def main():
         log_file.write(
             "parameters: "
             f"epochs={args.training_rounds}, batch={args.batch_size}, "
-            f"seq_len={args.seq_len}, pred_len={pred_len}, year={args.year}\n"
+            f"seq_len={args.seq_len}, pred_len={pred_len}, year={args.year}, "
+            f"lambda_h={args.lambda_h}, "
+            f"persistence_regret_weight={args.persistence_regret_weight}, "
+            f"gate_smooth_weight={args.gate_smooth_weight}\n"
         )
         log_file.write(f"flights utilized: {len(flights_inputs)}\n")
         log_file.write("-" * 40 + "\n")

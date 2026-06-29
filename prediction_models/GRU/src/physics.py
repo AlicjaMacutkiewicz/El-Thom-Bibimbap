@@ -467,6 +467,7 @@ class TotalLoss(nn.Module):
         lambda_h=1e-6,
         model_type="gru_res_phys",
         lambda_regret=0.1,
+        lambda_gate_smooth=0.0,
     ):
         super().__init__()
         self.model_type = model_type
@@ -481,6 +482,7 @@ class TotalLoss(nn.Module):
 
         self.lambda_h = lambda_h        
         self.lambda_regret = lambda_regret
+        self.lambda_gate_smooth = lambda_gate_smooth
         self.mse = nn.MSELoss()
 
     def forward(
@@ -568,7 +570,16 @@ class TotalLoss(nn.Module):
                 (anchor_position - denormalized_pos_target).square().sum(dim=-1).mean(dim=-1)
             )
             regret = torch.relu(model_window_error - anchor_window_error).mean()
-            return mse_acc + self.lambda_h * pinn + self.lambda_regret * regret
+            if gate.shape[1] > 1:
+                gate_smooth = (gate[:, 1:, :] - gate[:, :-1, :]).square().mean()
+            else:
+                gate_smooth = torch.zeros((), dtype=preds.dtype, device=device)
+            return (
+                mse_acc
+                + self.lambda_h * pinn
+                + self.lambda_regret * regret
+                + self.lambda_gate_smooth * gate_smooth
+            )
 
         # Standard variants emit only three normalized acceleration/residual channels.
         denormalized_preds = preds * self.target_std.to(device) + self.target_mean.to(device)

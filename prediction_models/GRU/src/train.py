@@ -70,6 +70,9 @@ def train_model(
             "epochs": training_rounds,
             "seq_len": seq_len,
             "pred_len": pred_len,
+            "lambda_h": getattr(loss, "lambda_h", None),
+            "lambda_regret": getattr(loss, "lambda_regret", None),
+            "lambda_gate_smooth": getattr(loss, "lambda_gate_smooth", None),
         },
     )
 
