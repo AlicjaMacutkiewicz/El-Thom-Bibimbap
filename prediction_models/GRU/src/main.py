@@ -44,6 +44,7 @@ def parse_args():
     parser.add_argument("--batch-size", type=int, default=1280)
     parser.add_argument("--training-rounds", type=int, default=10)
     parser.add_argument("--seq-len", type=int, default=200)
+    parser.add_argument("--pred-len", type=int, default=None,)
     parser.add_argument("--year", type=str, default="2025")
     parser.add_argument("--downsample", type=int, default=25)
     parser.add_argument("--resume-from", type=str, default=None)
@@ -82,9 +83,9 @@ def main():
     device = get_best_device()
 
     sampling_rate = 500.0 / args.downsample
-    # pred_len is set equal to seq_len so the model predicts
-    # the same number of future samples as it receives from the past
-    pred_len = args.seq_len
+    pred_len = args.pred_len if args.pred_len is not None else args.seq_len
+    if args.seq_len <= 0 or pred_len <= 0:
+        raise ValueError("--seq-len and --pred-len must be positive integers.")
 
     # load physics parameters
     parameters_path, thrust_curve_path = default_physics_paths()
@@ -225,6 +226,7 @@ def main():
 
     print("data preprocessing and sequence generation complete")
     print(f"model input columns ({len(INPUT_COLUMNS)}): {INPUT_COLUMNS}")
+    print(f"window configuration: seq_len={args.seq_len}, pred_len={pred_len}")
 
     (
         X_train,
@@ -340,6 +342,8 @@ def main():
         batch_size=args.batch_size,
         training_rounds=args.training_rounds,
         pred_len=pred_len,
+        seq_len=args.seq_len,
+        year=args.year,
         checkpoint_prefix={
             "gru_res_phys_persist_gate": "gated_",
             "last_acc_gru": "last_acc_",
@@ -352,8 +356,13 @@ def main():
         "gru_res_phys_persist_gate": "gated_",
         "last_acc_gru": "last_acc_",
     }.get(args.model_type, "")
+    window_tag = (
+        f"seq{args.seq_len}"
+        if args.seq_len == pred_len
+        else f"seq{args.seq_len}_pred{pred_len}"
+    )
     model_filename = (
-        f"{model_prefix}gru_model_rounds{args.training_rounds}_seq{args.seq_len}.pth"
+        f"{model_prefix}gru_model_rounds{args.training_rounds}_{window_tag}.pth"
     )
     torch.save(model.state_dict(), model_filename)
     print(f"model weights saved to file: {model_filename}")
@@ -361,7 +370,9 @@ def main():
     with open("learning_state.txt", "a") as log_file:
         log_file.write(f"trained model: {model_filename}\n")
         log_file.write(
-            f"parameters: epochs={args.training_rounds}, batch={args.batch_size}, year={args.year}\n"
+            "parameters: "
+            f"epochs={args.training_rounds}, batch={args.batch_size}, "
+            f"seq_len={args.seq_len}, pred_len={pred_len}, year={args.year}\n"
         )
         log_file.write(f"flights utilized: {len(flights_inputs)}\n")
         log_file.write("-" * 40 + "\n")

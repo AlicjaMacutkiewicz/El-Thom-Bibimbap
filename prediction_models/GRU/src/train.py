@@ -29,6 +29,7 @@ def train_model(
     batch_size=64,
     training_rounds=10,
     year="all",
+    seq_len=None,
     checkpoint_prefix="",
 ):
     """
@@ -57,12 +58,19 @@ def train_model(
     train_losses = []
     test_losses = []
     best_test_loss = float("inf")
+    seq_len = pred_len if seq_len is None else seq_len
+    window_tag = f"seq{seq_len}" if seq_len == pred_len else f"seq{seq_len}_pred{pred_len}"
 
     # initialize wandb session
     wandb.init(
         project="rocket-trajectory",
-        name=f"{checkpoint_prefix}gru_seq{pred_len}_yr{year}",
-        config={"batch_size": batch_size, "epochs": training_rounds, "seq_len": pred_len},
+        name=f"{checkpoint_prefix}gru_{window_tag}_yr{year}",
+        config={
+            "batch_size": batch_size,
+            "epochs": training_rounds,
+            "seq_len": seq_len,
+            "pred_len": pred_len,
+        },
     )
 
     # automatically track model weights and gradients
@@ -180,14 +188,14 @@ def train_model(
         # checkpoint saving
         if (training_round + 1) % 5 == 0:
             checkpoint_filename = (
-                f"{checkpoint_prefix}gru_checkpoint_round_{training_round + 1}_seq{pred_len}.pth"
+                f"{checkpoint_prefix}gru_checkpoint_round_{training_round + 1}_{window_tag}.pth"
             )
             torch.save(model.state_dict(), checkpoint_filename)
             print(f"checkpoint: {checkpoint_filename}")
 
         if avg_test_loss < best_test_loss:
             best_test_loss = avg_test_loss
-            best_checkpoint_filename = f"best_{checkpoint_prefix}gru_model_seq{pred_len}.pth"
+            best_checkpoint_filename = f"best_{checkpoint_prefix}gru_model_{window_tag}.pth"
             torch.save(model.state_dict(), best_checkpoint_filename)
             print(f"best checkpoint: {best_checkpoint_filename} (test loss: {best_test_loss:.8e})")
 

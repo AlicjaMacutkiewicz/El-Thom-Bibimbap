@@ -6,8 +6,11 @@ This evaluator is intentionally scoped to the available FAR-OUT 2026 references:
 * model input uses real IMU/gyro/barometer/temperature telemetry,
 * acceleration is evaluated on the available vertical filtered acceleration,
 * position is evaluated on the available vertical altitude/height reference,
-* X/Y forecast envelopes are illustrative only because no independent horizontal
-  ground-truth trajectory is available.
+* X/Y forecast envelopes are illustrative by default because no independent
+  horizontal ground-truth trajectory is available.
+* optional coarse 3D diagnostics can be enabled with --gnss-trajectory. These
+  compare against a GNSS/barometric reconstructed path and are not treated as
+  exact high-rate 3D ground truth.
 
 The script compares the same three neural variants used in the synthetic
 ablation test:
@@ -56,9 +59,9 @@ from evaluate_gru import (  # noqa: E402  # type: ignore
     configure_imports,
     integrate_position,
     load_networks,
+    polynomial_prediction,
     predict_model_accelerations,
 )
-
 
 Z_POSITION_COLUMN = "Position_Z"
 Z_ACCELERATION_COLUMN = "Acceleration_Z"
@@ -144,6 +147,50 @@ class OneDimMetric:
         }
 
 
+@dataclass
+class ThreeDimMetric:
+    squared_sum: float = 0.0
+    point_count: int = 0
+    window_rmse: list[np.ndarray] = field(default_factory=list)
+    failures: int = 0
+
+    def add(self, prediction: np.ndarray, truth: np.ndarray, threshold: float) -> np.ndarray:
+        error = prediction - truth
+        squared_distance = np.square(error).sum(axis=-1)
+        window = np.sqrt(np.mean(squared_distance, axis=1))
+        self.squared_sum += float(squared_distance.sum())
+        self.point_count += int(squared_distance.size)
+        self.window_rmse.append(window.astype(np.float32, copy=False))
+        self.failures += int((window > threshold).sum())
+        return window
+
+    def summarize(self) -> dict[str, float | int | None]:
+        if not self.window_rmse or self.point_count == 0:
+            return {
+                "point_rmse_m": None,
+                "mean_window_rmse_m": None,
+                "median_window_rmse_m": None,
+                "p95_window_rmse_m": None,
+                "p99_window_rmse_m": None,
+                "max_window_rmse_m": None,
+                "failures_over_threshold": 0,
+                "windows": 0,
+                "failure_rate_pct": 0.0,
+            }
+        windows = np.concatenate(self.window_rmse)
+        return {
+            "point_rmse_m": float(np.sqrt(self.squared_sum / self.point_count)),
+            "mean_window_rmse_m": float(windows.mean()),
+            "median_window_rmse_m": float(np.median(windows)),
+            "p95_window_rmse_m": float(np.quantile(windows, 0.95)),
+            "p99_window_rmse_m": float(np.quantile(windows, 0.99)),
+            "max_window_rmse_m": float(windows.max()),
+            "failures_over_threshold": self.failures,
+            "windows": int(windows.size),
+            "failure_rate_pct": float(100.0 * self.failures / windows.size),
+        }
+
+
 def log(message: str) -> None:
     print(message, flush=True)
 
@@ -197,6 +244,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Scaler file with mean_in/std_in/mean_acc/std_acc/mean_xs/std_xs. "
             "Defaults to ~/gru_ablation_eval_generalized/reconstructed_scalers.npz."
+        ),
+    )
+    parser.add_argument(
+        "--gnss-trajectory",
+        type=Path,
+        default=None,
+        help=(
+            "Optional coarse GNSS-derived trajectory CSV from far_out_26_data/positionCreator.py. "
+            "When provided, the evaluator adds clearly labeled coarse 3D diagnostics."
         ),
     )
     parser.add_argument("--parameters", type=Path, default=None)
@@ -266,6 +322,8 @@ def parse_args() -> argparse.Namespace:
 def resolve_paths(args: argparse.Namespace) -> None:
     args.repo = args.repo.expanduser().resolve()
     args.flight = args.flight.expanduser().resolve()
+    if args.gnss_trajectory is not None:
+        args.gnss_trajectory = args.gnss_trajectory.expanduser().resolve()
 
     model_root = args.repo / "prediction_models" / "model_tests" / "final_model_generalized"
 
@@ -424,6 +482,7 @@ def make_windows(
         "starts": starts,
         "input_windows": inputs[lookback],
         "lookback_times": times[lookback],
+        "lookback_positions": positions[lookback],
         "lookback_position_z": positions[lookback, 2],
         "future_times": times[future],
         "actual_positions": positions[future],
@@ -435,6 +494,7 @@ def make_windows(
         "initial_position_z": positions[previous, 2],
         "initial_velocity_z": (positions[previous, 2] - positions[before_previous, 2]) / dt,
         "initial_time": times[previous],
+        "before_initial_time": times[before_previous],
         "previous_acceleration_z": accelerations[previous, 2],
         "previous_accelerations": accelerations[previous],
         "condition_context": inputs[previous, -len(CONDITION_COLUMNS) :],
@@ -495,6 +555,66 @@ def polynomial_prediction_z(
     ).astype(np.float32)
 
 
+def load_gnss_reference(
+    path: Path,
+    target_times: np.ndarray,
+) -> tuple[np.ndarray, dict[str, object]]:
+    """Interpolate a coarse GNSS/barometric trajectory onto evaluator timestamps."""
+    data = pd.read_csv(path)
+    candidate_sets = [
+        ("Time", ["Position_X", "Position_Y", "Position_Z"]),
+        ("ts", ["x", "y", "z"]),
+    ]
+    selected: tuple[str, list[str]] | None = None
+    for time_column, position_columns in candidate_sets:
+        if time_column in data.columns and all(column in data.columns for column in position_columns):
+            selected = (time_column, position_columns)
+            break
+    if selected is None:
+        raise ValueError(
+            f"{path} must contain either Time/Position_X/Position_Y/Position_Z "
+            "or ts/x/y/z columns."
+        )
+
+    time_column, position_columns = selected
+    subset = data[[time_column, *position_columns]].copy()
+    for column in subset.columns:
+        subset[column] = pd.to_numeric(subset[column], errors="coerce")
+    subset = subset.dropna().sort_values(time_column)
+    subset = subset.drop_duplicates(subset=[time_column], keep="last").reset_index(drop=True)
+    if len(subset) < 2:
+        raise ValueError(f"{path} needs at least two finite trajectory samples.")
+
+    source_times = subset[time_column].to_numpy(dtype=np.float64)
+    source_positions = subset[position_columns].to_numpy(dtype=np.float64)
+    flat_targets = target_times.astype(np.float64, copy=False).reshape(-1)
+    clipped = (flat_targets < source_times[0]) | (flat_targets > source_times[-1])
+    interpolated = np.column_stack(
+        [
+            np.interp(flat_targets, source_times, source_positions[:, axis])
+            for axis in range(3)
+        ]
+    )
+    reference = interpolated.reshape(*target_times.shape, 3).astype(np.float32)
+    metadata = {
+        "path": str(path),
+        "columns": {"time": time_column, "position": position_columns},
+        "samples": len(subset),
+        "time_start_s": float(source_times[0]),
+        "time_end_s": float(source_times[-1]),
+        "target_time_start_s": float(np.min(flat_targets)),
+        "target_time_end_s": float(np.max(flat_targets)),
+        "clipped_target_points": int(clipped.sum()),
+        "clipped_target_rate_pct": float(100.0 * clipped.mean()),
+        "scope": (
+            "Coarse GNSS-derived 3D diagnostic reference. X/Y are interpolated "
+            "from GNSS and Z from filtered/barometric altitude; this is not exact "
+            "high-rate full 3D ground truth."
+        ),
+    }
+    return reference, metadata
+
+
 def method_key(method: str) -> str:
     key = "".join(character.lower() if character.isalnum() else "_" for character in method)
     return "_".join(part for part in key.split("_") if part)
@@ -504,6 +624,7 @@ def build_prediction_envelopes(
     model_specs: list[ModelSpec],
     model_positions: dict[str, np.ndarray],
     windows: dict[str, np.ndarray],
+    reference_positions: np.ndarray | None = None,
 ) -> list[dict[str, float | int | str]]:
     """Summarize forecast spread by lead time across overlapping real-flight windows."""
     lead_times = windows["future_times"] - windows["initial_time"][:, None]
@@ -513,7 +634,10 @@ def build_prediction_envelopes(
     for spec in model_specs:
         prediction = model_positions[spec.name]
         for axis_index, axis in enumerate(["X", "Y", "Z"]):
-            if axis == "Z":
+            if reference_positions is not None:
+                values = prediction[:, :, axis_index] - reference_positions[:, :, axis_index]
+                quantity = "signed_error_vs_coarse_gnss_reference_m"
+            elif axis == "Z":
                 values = prediction[:, :, axis_index] - windows["actual_positions"][:, :, axis_index]
                 quantity = "signed_error_vs_vertical_reference_m"
             else:
@@ -652,13 +776,13 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         if not spec.path.exists():
             raise FileNotFoundError(f"{spec.name} checkpoint not found: {spec.path}")
     neural_methods = [spec.name for spec in model_specs]
-    position_methods = neural_methods + [
+    position_methods = neural_methods + [  # noqa: RUF005
         "Polynomial",
         "RK4 only",
         "Last acceleration",
         "Oracle acceleration",
     ]
-    acceleration_methods = neural_methods + ["RK4 only", "Last acceleration"]
+    acceleration_methods = neural_methods + ["RK4 only", "Last acceleration"]  # noqa: RUF005
 
     mean_in, std_in, mean_acc, std_acc, mean_xs, std_xs = load_scalers(args.scaler_npz)
     device, gpu_ids = select_device(args)
@@ -681,6 +805,38 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         args.min_start_time,
         args.max_start_time,
     )
+    gnss_reference_positions: np.ndarray | None = None
+    gnss_reference_metadata: dict[str, object] | None = None
+    integration_initial_positions = windows["initial_positions"]
+    integration_initial_velocities = windows["initial_velocities"]
+    polynomial_lookback_positions = windows["lookback_positions"]
+    if args.gnss_trajectory is not None:
+        gnss_reference_positions, gnss_reference_metadata = load_gnss_reference(
+            args.gnss_trajectory,
+            windows["future_times"],
+        )
+        polynomial_lookback_positions, _ = load_gnss_reference(
+            args.gnss_trajectory,
+            windows["lookback_times"],
+        )
+        gnss_initial_positions, _ = load_gnss_reference(
+            args.gnss_trajectory,
+            windows["initial_time"],
+        )
+        gnss_before_positions, _ = load_gnss_reference(
+            args.gnss_trajectory,
+            windows["before_initial_time"],
+        )
+        initial_dt = np.maximum(
+            windows["initial_time"] - windows["before_initial_time"],
+            1e-6,
+        )[:, None]
+        integration_initial_positions = gnss_initial_positions
+        integration_initial_velocities = (gnss_initial_positions - gnss_before_positions) / initial_dt
+        gnss_reference_metadata["initial_state_source"] = (
+            "Initial 3D position and velocity for coarse 3D metrics are interpolated "
+            "from the same GNSS/barometric trajectory."
+        )
     base_acc = baseline_acceleration(
         calculate_x_b,
         windows["future_times"].astype(np.float32),
@@ -710,6 +866,11 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
     acceleration_predictions: dict[str, np.ndarray] = {
         spec.name: model_acc_3d[spec.name][:, :, 2] for spec in model_specs
     }
+    last_acc_3d = np.repeat(
+        windows["previous_accelerations"][:, None, :],
+        args.pred_len,
+        axis=1,
+    )
     acceleration_predictions["RK4 only"] = base_acc[:, :, 2]
     acceleration_predictions["Last acceleration"] = np.repeat(
         windows["previous_acceleration_z"][:, None], args.pred_len, axis=1
@@ -731,32 +892,74 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         windows["lookback_position_z"],
         windows["future_times"],
     )
-    model_position_predictions_3d = {
+    position_predictions_3d: dict[str, np.ndarray] = {
         spec.name: integrate_position(
             model_acc_3d[spec.name],
             windows["future_times"],
-            windows["initial_positions"],
-            windows["initial_velocities"],
+            integration_initial_positions,
+            integration_initial_velocities,
             windows["initial_time"],
         )
         for spec in model_specs
+    }
+    position_predictions_3d["RK4 only"] = integrate_position(
+        base_acc,
+        windows["future_times"],
+        integration_initial_positions,
+        integration_initial_velocities,
+        windows["initial_time"],
+    )
+    position_predictions_3d["Last acceleration"] = integrate_position(
+        last_acc_3d,
+        windows["future_times"],
+        integration_initial_positions,
+        integration_initial_velocities,
+        windows["initial_time"],
+    )
+    position_predictions_3d["Oracle acceleration"] = integrate_position(
+        windows["actual_accelerations"],
+        windows["future_times"],
+        integration_initial_positions,
+        integration_initial_velocities,
+        windows["initial_time"],
+    )
+    position_predictions_3d["Polynomial"] = polynomial_prediction(
+        windows["lookback_times"],
+        polynomial_lookback_positions,
+        windows["future_times"],
+    )
+    model_position_predictions_3d = {
+        spec.name: position_predictions_3d[spec.name] for spec in model_specs
     }
     envelope_rows = build_prediction_envelopes(
         model_specs,
         model_position_predictions_3d,
         windows,
+        gnss_reference_positions,
     )
 
     position_metrics = {method: OneDimMetric() for method in position_methods}
     acceleration_metrics = {method: OneDimMetric() for method in acceleration_methods}
+    coarse_gnss_3d_metrics = (
+        {method: ThreeDimMetric() for method in position_methods}
+        if gnss_reference_positions is not None
+        else {}
+    )
     window_rmse_by_method: dict[str, np.ndarray] = {}
     acc_rmse_by_method: dict[str, np.ndarray] = {}
+    coarse_gnss_3d_rmse_by_method: dict[str, np.ndarray] = {}
     for method in position_methods:
         window_rmse_by_method[method] = position_metrics[method].add(
             position_predictions[method],
             windows["actual_position_z"],
             args.position_threshold,
         )
+        if gnss_reference_positions is not None:
+            coarse_gnss_3d_rmse_by_method[method] = coarse_gnss_3d_metrics[method].add(
+                position_predictions_3d[method],
+                gnss_reference_positions,
+                args.position_threshold,
+            )
     for method in acceleration_methods:
         acc_rmse_by_method[method] = acceleration_metrics[method].add(
             acceleration_predictions[method],
@@ -779,6 +982,16 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
                 position_predictions[method][index, -1]
                 - windows["actual_position_z"][index, -1]
             )
+            if gnss_reference_positions is not None:
+                row[f"{key}_coarse_gnss_3d_window_rmse_m"] = float(
+                    coarse_gnss_3d_rmse_by_method[method][index]
+                )
+                row[f"{key}_coarse_gnss_3d_endpoint_error_m"] = float(
+                    np.linalg.norm(
+                        position_predictions_3d[method][index, -1]
+                        - gnss_reference_positions[index, -1]
+                    )
+                )
         for method in acceleration_methods:
             key = method_key(method)
             row[f"{key}_acceleration_z_window_rmse"] = float(acc_rmse_by_method[method][index])
@@ -795,6 +1008,8 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         "parameters": str(args.parameters),
         "thrust_curve": str(args.thrust_curve),
         "scaler_npz": str(args.scaler_npz),
+        "gnss_trajectory": str(args.gnss_trajectory) if args.gnss_trajectory else None,
+        "coarse_gnss_reference": gnss_reference_metadata,
         "output_dir": str(args.output_dir),
         "axis_maps": {"acc": args.acc_axis_map, "gyro": args.gyro_axis_map},
         "launch_conditions": {
@@ -802,7 +1017,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
             "Scenario_Pressure_Scale": args.pressure_scale,
             "Scenario_Rocket_Mass_Scale": args.rocket_mass_scale,
         },
-        "rows_after_downsample": int(len(times)),
+        "rows_after_downsample": len(times),
         "time_start_s": float(times[0]),
         "time_end_s": float(times[-1]),
         "dt_median_s": float(np.median(dt)),
@@ -813,7 +1028,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         "horizon_seconds_median": float(np.median(lead_seconds)),
         "horizon_seconds_min": float(np.min(lead_seconds)),
         "horizon_seconds_max": float(np.max(lead_seconds)),
-        "windows_evaluated": int(len(windows["starts"])),
+        "windows_evaluated": len(windows["starts"]),
         "position_threshold_m": args.position_threshold,
         "acc_threshold": args.acc_threshold,
         "position_z_metrics": {
@@ -822,6 +1037,12 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         "acceleration_z_metrics": {
             method: acceleration_metrics[method].summarize() for method in acceleration_methods
         },
+        "coarse_gnss_3d_metrics": {
+            method: coarse_gnss_3d_metrics[method].summarize()
+            for method in position_methods
+        }
+        if gnss_reference_positions is not None
+        else {},
         "validation_scope": {
             "validated": [
                 "real telemetry ingestion",
@@ -835,9 +1056,11 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
                 "live operational dropout handling",
             ],
             "envelope_note": (
-                "Z envelopes are signed errors against the telemetry-derived vertical reference. "
-                "X/Y envelopes are predicted displacements from each cutoff state and are not "
-                "horizontal accuracy measurements or calibrated uncertainty intervals."
+                "When --gnss-trajectory is provided, X/Y/Z envelopes are signed errors against "
+                "the coarse GNSS/barometric trajectory. Otherwise, Z envelopes are signed errors "
+                "against the telemetry-derived vertical reference and X/Y envelopes are predicted "
+                "displacements from each cutoff state. These envelopes are not calibrated "
+                "uncertainty intervals."
             ),
         },
     }
@@ -865,8 +1088,14 @@ def write_outputs(
             writer.writeheader()
             writer.writerows(envelope_rows)
 
+    has_coarse_gnss = bool(summary.get("coarse_gnss_3d_metrics"))
+    title = (
+        "REAL FLIGHT REPLAY SUMMARY - Z AXIS + COARSE GNSS 3D"
+        if has_coarse_gnss
+        else "REAL FLIGHT REPLAY SUMMARY - Z AXIS ONLY"
+    )
     lines = [
-        "REAL FLIGHT REPLAY SUMMARY - Z AXIS ONLY",
+        title,
         f"Flight: {summary['flight']}",
         f"Parameters: {summary['parameters']}",
         f"Thrust curve: {summary['thrust_curve']}",
@@ -883,9 +1112,21 @@ def write_outputs(
         f"Windows evaluated: {summary['windows_evaluated']:,}",
         f"Position threshold: >{summary['position_threshold_m']:.1f} m window RMSE",
         f"Acceleration threshold: >{summary['acc_threshold']:.1f} window RMSE",
-        "",
-        "Z POSITION FORECAST METRICS",
     ]
+    if has_coarse_gnss:
+        reference = summary["coarse_gnss_reference"]
+        lines.extend(
+            [
+                "",
+                "Coarse GNSS trajectory:",
+                f"  path={reference['path']}",
+                f"  samples={reference['samples']:,}  "
+                f"time={reference['time_start_s']:.2f}..{reference['time_end_s']:.2f}s",
+                f"  clipped target points={reference['clipped_target_points']:,} "
+                f"({reference['clipped_target_rate_pct']:.3f}%)",
+            ]
+        )
+    lines.extend(["", "Z POSITION FORECAST METRICS"])
     for method in summary["position_methods"]:
         item = summary["position_z_metrics"][method]
         lines.append(
@@ -896,6 +1137,18 @@ def write_outputs(
             f">threshold={item['failures_over_threshold']:,}/{item['windows']:,} "
             f"({item['failure_rate_pct']:.3f}%)"
         )
+    if has_coarse_gnss:
+        lines.extend(["", "COARSE GNSS-DERIVED 3D POSITION METRICS"])
+        for method in summary["position_methods"]:
+            item = summary["coarse_gnss_3d_metrics"][method]
+            lines.append(
+                f"{method:20s} point_RMSE={item['point_rmse_m']:.3f} m  "
+                f"mean_window={item['mean_window_rmse_m']:.3f} m  "
+                f"p95={item['p95_window_rmse_m']:.3f} m  "
+                f"p99={item['p99_window_rmse_m']:.3f} m  "
+                f">threshold={item['failures_over_threshold']:,}/{item['windows']:,} "
+                f"({item['failure_rate_pct']:.3f}%)"
+            )
     lines.extend(["", "Z ACCELERATION FORECAST METRICS"])
     for method in summary["acceleration_methods"]:
         item = summary["acceleration_z_metrics"][method]
@@ -912,7 +1165,7 @@ def write_outputs(
             "",
             "INTERPRETATION WARNING",
             "This is a real-flight proof-of-concept replay using vertical telemetry-derived references.",
-            "It does not validate X/Y or full 3D trajectory accuracy.",
+            "Coarse GNSS-derived X/Y/Z diagnostics are approximate and do not validate exact full 3D trajectory accuracy.",
             "The envelope plots summarize overlapping forecast windows; they are not calibrated uncertainty intervals.",
         ]
     )
@@ -938,15 +1191,8 @@ def render_plots(
     acceleration = summary["acceleration_z_metrics"]
     comparison = [
         method
-        for method in [
-            PLAIN_GRU_METHOD,
-            GRU_RK4_METHOD,
-            GRU_RK4_PHYS_METHOD,
-            GRU_RK4_PHYS_GATE_METHOD,
-            "Polynomial",
-            "RK4 only",
-            "Last acceleration",
-        ]
+        for method in summary["position_methods"]
+        if method != "Oracle acceleration"
         if method in position
     ]
 
@@ -988,11 +1234,41 @@ def render_plots(
     fig.savefig(args.output_dir / "z_acceleration_ablation_comparison.png", dpi=180)
     plt.close(fig)
 
+    if summary.get("coarse_gnss_3d_metrics"):
+        coarse_3d = summary["coarse_gnss_3d_metrics"]
+        comparison_3d = [
+            method for method in summary["position_methods"] if method != "Oracle acceleration"
+        ]
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        axes[0].bar(
+            comparison_3d,
+            [coarse_3d[method]["mean_window_rmse_m"] for method in comparison_3d],
+            color=[COLORS[method] for method in comparison_3d],
+        )
+        axes[0].set_title("Coarse GNSS 3D Mean Window RMSE")
+        axes[0].set_ylabel("Mean window RMSE (m)")
+        axes[0].tick_params(axis="x", rotation=25)
+        axes[0].grid(axis="y", alpha=0.3)
+
+        axes[1].bar(
+            comparison_3d,
+            [coarse_3d[method]["failure_rate_pct"] for method in comparison_3d],
+            color=[COLORS[method] for method in comparison_3d],
+        )
+        axes[1].set_title("Coarse GNSS 3D Threshold Failure Rate")
+        axes[1].set_ylabel(f"Windows > {args.position_threshold:g} m (%)")
+        axes[1].tick_params(axis="x", rotation=25)
+        axes[1].grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(args.output_dir / "coarse_gnss_3d_ablation_comparison.png", dpi=180)
+        plt.close(fig)
+
     if rows:
         data = pd.DataFrame(rows)
         fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
         for method in [
             GRU_RK4_PHYS_GATE_METHOD,
+            LAST_ACC_GRU_METHOD,
             GRU_RK4_PHYS_METHOD,
             GRU_RK4_METHOD,
             PLAIN_GRU_METHOD,
@@ -1017,6 +1293,7 @@ def render_plots(
 
         for method in [
             GRU_RK4_PHYS_GATE_METHOD,
+            LAST_ACC_GRU_METHOD,
             GRU_RK4_PHYS_METHOD,
             GRU_RK4_METHOD,
             PLAIN_GRU_METHOD,
@@ -1046,11 +1323,33 @@ def render_plots(
 
     envelopes = pd.DataFrame(envelope_rows)
     neural_methods = [item["name"] for item in summary["models"]]
-    axis_descriptions = {
-        "X": "Predicted X displacement from cutoff (m)",
-        "Y": "Predicted Y displacement from cutoff (m)",
-        "Z": "Z position error vs vertical reference (m)",
-    }
+    has_coarse_gnss = bool(summary.get("coarse_gnss_3d_metrics"))
+    if has_coarse_gnss:
+        axis_descriptions = {
+            "X": "X error vs coarse GNSS reference (m)",
+            "Y": "Y error vs coarse GNSS reference (m)",
+            "Z": "Z error vs coarse GNSS reference (m)",
+        }
+        envelope_note = (
+            "Shading is an empirical spread across windows, not a calibrated confidence interval. "
+            "X/Y/Z are compared against the coarse GNSS/barometric trajectory, not exact 3D truth."
+        )
+        width_note = (
+            "Values are errors against the coarse GNSS/barometric trajectory; this is an approximate diagnostic."
+        )
+    else:
+        axis_descriptions = {
+            "X": "Predicted X displacement from cutoff (m)",
+            "Y": "Predicted Y displacement from cutoff (m)",
+            "Z": "Z position error vs vertical reference (m)",
+        }
+        envelope_note = (
+            "Shading is an empirical spread across windows, not a calibrated confidence interval. "
+            "X/Y have no independent flight-path reference; Z uses the telemetry-derived vertical reference."
+        )
+        width_note = (
+            "For X/Y the value is displacement from cutoff; for Z it is error against the vertical reference."
+        )
 
     fig, axes = plt.subplots(
         3,
@@ -1112,8 +1411,7 @@ def render_plots(
     fig.text(
         0.5,
         0.005,
-        "Shading is an empirical spread across windows, not a calibrated confidence interval. "
-        "X/Y have no independent flight-path reference; Z uses the telemetry-derived vertical reference.",
+        envelope_note,
         ha="center",
         fontsize=9,
     )
@@ -1220,7 +1518,7 @@ def render_plots(
     fig.text(
         0.5,
         0.01,
-        "For X/Y the value is displacement from cutoff; for Z it is error against the vertical reference.",
+        width_note,
         ha="center",
         fontsize=9,
     )
@@ -1240,6 +1538,8 @@ def main() -> int:
         args.gru_res_model,
         args.gru_res_phys_model,
         args.gru_res_phys_gate_model,
+        args.last_acc_gru_model,
+        args.gnss_trajectory,
         args.scaler_npz,
         args.parameters,
         args.thrust_curve,
@@ -1253,6 +1553,8 @@ def main() -> int:
     log(f"Flight: {args.flight}")
     log(f"Parameters: {args.parameters}")
     log(f"Thrust curve: {args.thrust_curve}")
+    if args.gnss_trajectory is not None:
+        log(f"Coarse GNSS trajectory: {args.gnss_trajectory}")
     log(f"Axis maps: acc={args.acc_axis_map}, gyro={args.gyro_axis_map}")
     log(
         "Launch conditions: "
