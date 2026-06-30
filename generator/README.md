@@ -43,7 +43,7 @@ The current configuration explicitly models the noise, variance, and bias profil
 
 ## Pipeline and Architecture
 1. **Input:** `.ork` project (OpenRocket) → Conversion via `RocketSerializer` to `.json`.
-2. **Config:** Base settings located in the `/source_model` folder (configured via `paths.json`).
+2. **Config:** Base settings located in the `/source_data` folder (configured via `paths.json`).
 3. **Execution:** Concurrent thread execution using `pathos`. Each thread generates an independent instance of the `StochasticMotor` class.
 4. **Logging:** The full process run is saved in `output/logs.txt`.
 5. **Output:** `.parquet` files with raw sensor data (High Frequency Data).
@@ -67,9 +67,9 @@ python main.py --paths paths_robustness.json \
 ```
 
 The default `paths.json` file points to the nominal R7 configuration in
-`source_model/R7_SIMLE/R7_OUTPUT`. The `--competition-day` flag switches the
+`source_data/R7_SIMLE/R7_OUTPUT`. The `--competition-day` flag switches the
 generator to `paths_farout_26.json`, which points to the FAR-OUT 2026
-configuration in `source_model/R7_SIMLE/R7_FAROUT_26`. This keeps the nominal
+configuration in `source_data/R7_SIMLE/R7_FAROUT_26`. This keeps the nominal
 configuration and the launch-day approximation separate and traceable.
 The FAR-OUT source thrust curve already represents approximately 85% of nominal
 pressure. Its paths file records that source condition so the scenario's 0.85
@@ -136,6 +136,6 @@ configuration:
 
 ```bash
 python main.py ... \
-  --parameters ../../../source_model/R7_SIMLE/R7_ROBUSTNESS/parameters.json \
-  --thrust-curve ../../../source_model/R7_SIMLE/R7_OUTPUT/thrust_source.csv
+  --parameters ../../../source_data/R7_SIMLE/R7_ROBUSTNESS/parameters.json \
+  --thrust-curve ../../../source_data/R7_SIMLE/R7_OUTPUT/thrust_source.csv
 ```

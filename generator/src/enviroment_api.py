@@ -13,7 +13,7 @@ from scipy.interpolate import interp1d
 # PROVIDED PATH SHOULD NOT CONTAINT FILE NAME ONLY DIRECTORY
 # This method is not thred save, u need to ensure that no other thred is using same file name
 def get_enviroment_from_date(
-    environment_data, date, longitude, latitude, filename, path="../../source_model/ERA5_weather/"
+    environment_data, date, longitude, latitude, filename, path="../../source_data/ERA5_weather/"
 ):
     os.makedirs(os.path.join(path, "single"), exist_ok=True)
     os.makedirs(os.path.join(path, "levels"), exist_ok=True)
@@ -156,7 +156,7 @@ def get_enviroment_from_date(
     return env
 
 
-def download_yearly_weather(year, longitude, latitude, path="../../source_model/ERA5_weather/"):
+def download_yearly_weather(year, longitude, latitude, path="../../source_data/ERA5_weather/"):
     """
     Downloads an entire year of data (at 12:00) in just TWO API requests.
     Saves them locally so workers don't need internet access.

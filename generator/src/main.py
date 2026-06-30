@@ -357,12 +357,12 @@ def init_paths_from_json(main_paths_file):
     return dataset
 
 
-def select_thrust_path(source_model_paths):
+def select_thrust_path(source_data_paths):
     """Select the canonical thrust source with legacy-key compatibility."""
-    thrust_path = source_model_paths.get("thrust_source")
+    thrust_path = source_data_paths.get("thrust_source")
     if thrust_path is not None:
         return thrust_path
-    return source_model_paths["thrust_source_100"]
+    return source_data_paths["thrust_source_100"]
 
 
 def _resolve_path(path):
@@ -998,22 +998,22 @@ def main():
         yearly_files[year] = {"single": sl_file, "levels": pl_file}
     amount_in_parrallel = 12
 
-    source_model_paths = paths["source_model_path"]
-    thrust_path = select_thrust_path(source_model_paths)
+    source_data_paths = paths["source_data_path"]
+    thrust_path = select_thrust_path(source_data_paths)
 
     results = parallel_generator(
         amount_in_parrallel=amount_in_parrallel,
         date_table=date_table,
         yearly_files=yearly_files,
-        json_path=paths["source_model_path"]["parameters"],
-        drag_path=paths["source_model_path"]["drag_curve"],
+        json_path=paths["source_data_path"]["parameters"],
+        drag_path=paths["source_data_path"]["drag_curve"],
         environment_data=environment_data,
         heading=heading,
         rail_length=rail_length,
         sensor_list=sensor_list,
         thrust_path=thrust_path,
         source_pressure_scale=float(
-            paths["source_model_path"].get("thrust_source_pressure_scale", 1.0)
+            paths["source_data_path"].get("thrust_source_pressure_scale", 1.0)
         ),
         scenario=scenario,
         stochastic_motor_params=stochastic_motor_params,

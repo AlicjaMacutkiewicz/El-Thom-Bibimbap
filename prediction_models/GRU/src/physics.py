@@ -607,7 +607,7 @@ def default_physics_paths():
     """Retrieves absolute paths for default physics configurations."""
 
     root = Path(__file__).resolve().parents[3]
-    model_root = root / "source_model" / "R7_SIMLE"
+    model_root = root / "source_data" / "R7_SIMLE"
 
     return (
         model_root / "R7_ROBUSTNESS" / "parameters.json",

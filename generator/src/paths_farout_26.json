@@ -1,17 +1,17 @@
 {
     "config_path": "config.json",
     "sensors_path": {
-        "accelerometer": "../../source_model/R7_SIMLE/sensors/accelerometer.json",
-        "gyroscope": "../../source_model/R7_SIMLE/sensors/gyroscope.json",
-        "barometer": "../../source_model/R7_SIMLE/sensors/barometer.json",
-        "thermometer": "../../source_model/R7_SIMLE/sensors/thermometer.json"
+        "accelerometer": "../../source_data/R7_SIMLE/sensors/accelerometer.json",
+        "gyroscope": "../../source_data/R7_SIMLE/sensors/gyroscope.json",
+        "barometer": "../../source_data/R7_SIMLE/sensors/barometer.json",
+        "thermometer": "../../source_data/R7_SIMLE/sensors/thermometer.json"
     },
-    "source_model_path": {
-        "parameters": "../../source_model/R7_SIMLE/R7_FAROUT_26/parameters.json",
-        "drag_curve": "../../source_model/R7_SIMLE/R7_OUTPUT/drag_curve.csv",
-        "thrust_source": "../../source_model/R7_SIMLE/R7_FAROUT_26/thrust_source.csv",
+    "source_data_path": {
+        "parameters": "../../source_data/R7_SIMLE/R7_FAROUT_26/parameters.json",
+        "drag_curve": "../../source_data/R7_SIMLE/R7_OUTPUT/drag_curve.csv",
+        "thrust_source": "../../source_data/R7_SIMLE/R7_FAROUT_26/thrust_source.csv",
         "thrust_source_pressure_scale": 0.85,
-        "thrust_source_60": "../../source_model/R7_SIMLE/R7_FAROUT_26/thrust_source_pressure85.csv",
-        "thrust_source_100": "../../source_model/R7_SIMLE/R7_FAROUT_26/thrust_source.csv"
+        "thrust_source_60": "../../source_data/R7_SIMLE/R7_FAROUT_26/thrust_source_pressure85.csv",
+        "thrust_source_100": "../../source_data/R7_SIMLE/R7_FAROUT_26/thrust_source.csv"
     }
 }

@@ -1,9 +1,0 @@
-{
-  "parameters": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/source_model/R7_SIMLE/R7_OUTPUT/parameters.json",
-  "thrust_curve": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/source_model/R7_SIMLE/R7_FAROUT_26/thrust_source_pressure85.csv",
-  "rocket_mass_kg": 57.02,
-  "motor_grain_initial_height_m": 1.95,
-  "source": "/Users/elukasiuk/Desktop/projects/pg-general/Rocket-trajectory-predictor/prediction_models/model_tests/gru_ablation_eval/reconstructed_scalers.npz",
-  "mode": "loaded_saved_scalers_no_reconstruction",
-  "note": "Original training normalizers loaded from prior ablation output; no retraining performed."
-}

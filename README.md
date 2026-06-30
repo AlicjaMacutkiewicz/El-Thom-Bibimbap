@@ -49,7 +49,7 @@ In classical telemetry, losing the signal results in losing all knowledge of the
 * `/docs` – Theoretical documentation and project schemes
 * `/generator` – Source code for the "Grzesiek" synthetic data generator
 * `/prediction_models` – Implementations of **"Maurycy"** (including GRU, VAR, and Integration modules)
-* `/source_model` – Configuration files, `.ork` models, and input data
+* `/source_data` – Configuration files, `.ork` models, and input data
 
 ---
 
@@ -123,7 +123,7 @@ W klasycznej telemetrii utrata sygnału oznacza utratę wiedzy o pozycji obiektu
 * `/docs` – Dokumentacja teoretyczna i schematy projektowe
 * `/generator` – Kod źródłowy generatora danych syntetycznych
 * `/prediction_models` – Implementacje modelu **"Maurycy"** (moduły GRU, VAR oraz Integracja)
-* `/source_model` – Pliki konfiguracyjne, modele `.ork` oraz dane wejściowe
+* `/source_data` – Pliki konfiguracyjne, modele `.ork` oraz dane wejściowe
 
 ---
 

@@ -1,5 +1,5 @@
 {
-    "parameters": "../../../source_model/R7_SIMLE/R7_OUTPUT/parameters.json",
-    "drag_curve": "../../../source_model/R7_SIMLE/R7_OUTPUT/drag_curve.csv",
-    "thrust_source": "../../../source_model/R7_SIMLE/R7_OUTPUT/thrust_source.csv"
+    "parameters": "../../../source_data/R7_SIMLE/R7_OUTPUT/parameters.json",
+    "drag_curve": "../../../source_data/R7_SIMLE/R7_OUTPUT/drag_curve.csv",
+    "thrust_source": "../../../source_data/R7_SIMLE/R7_OUTPUT/thrust_source.csv"
 }   

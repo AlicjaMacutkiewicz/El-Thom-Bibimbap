@@ -1,5 +1,0 @@
-target_rmse_m,file,start_sample_after_downsample,actual_gru_rmse_m
-0.25,flight_1966-12-23.parquet,242,0.2500002086162567
-0.5,flight_1997-06-15.parquet,655,0.5000013113021851
-1.0,flight_1976-02-10.parquet,499,1.0000015497207642
-10.0,flight_1962-05-13.parquet,108,10.000040054321289

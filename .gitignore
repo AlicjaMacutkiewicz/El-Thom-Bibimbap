@@ -118,6 +118,7 @@ source_model/ERA5_weather/
 #data to test the models
 demo_flight_data/
 
+#temp and output files
 testing_data/
 training_data/
 source_data/
@@ -126,3 +127,6 @@ learning_state.txt
 wandb/
 loss_progress.*
 prediction_sample_*
+
+#linter and parser cache
+.ruff_cache
