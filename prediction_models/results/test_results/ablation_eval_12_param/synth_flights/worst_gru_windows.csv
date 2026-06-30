@@ -1,0 +1,7 @@
+rank,file,start_sample_after_downsample,primary_window_rmse_m
+1,flight_1941-05-19.parquet,226,184.54705810546875
+2,flight_1988-02-19.parquet,262,124.24275970458984
+3,flight_1941-05-19.parquet,227,95.94796752929688
+4,flight_1988-02-19.parquet,261,95.70602416992188
+5,flight_1941-05-19.parquet,225,93.40299987792969
+6,flight_1988-02-19.parquet,260,93.20657348632812

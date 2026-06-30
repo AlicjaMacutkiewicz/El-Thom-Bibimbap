@@ -1,0 +1,46 @@
+EXHAUSTIVE EXTERNAL TEST SUMMARY - XYZ POSITION AND ACCELERATION
+Models:
+  Plain GRU: /home/emilia_lukasiuk/Rocket-trajectory-predictor/prediction_models/results/final_model_12_param/gru.pth (direct)
+  GRU-RK4: /home/emilia_lukasiuk/Rocket-trajectory-predictor/prediction_models/results/final_model_12_param/gru_res.pth (residual)
+  GRU-RK4 + physics: /home/emilia_lukasiuk/Rocket-trajectory-predictor/prediction_models/results/final_model_12_param/gru_res_phys.pth (residual)
+  Gated GRU-RK4 + physics: /home/emilia_lukasiuk/Rocket-trajectory-predictor/prediction_models/results/final_model_12_param/gru_res_phys_gate.pth (persistence_gated_residual)
+  Gated GRU-RK4 + physics (smooth): /home/emilia_lukasiuk/Rocket-trajectory-predictor/prediction_models/results/final_model_12_param/gru_res_phys_gate_smooth.pth (persistence_gated_residual)
+Primary neural method for examples: Gated GRU-RK4 + physics (smooth)
+External files evaluated: 412 (skipped: 0)
+RK4 parameters: /home/emilia_lukasiuk/Rocket-trajectory-predictor/source_data/R7_SIMLE/R7_ROBUSTNESS/parameters.json
+RK4 thrust curve: /home/emilia_lukasiuk/Rocket-trajectory-predictor/source_data/R7_SIMLE/R7_OUTPUT/thrust_source.csv
+Windows evaluated: 655,400
+History window: 120 samples (~5.09s median)
+Prediction window: 60 samples (~2.52s median)
+Runtime: 1.51 minutes
+Failure threshold: >10.0 m window RMSE
+
+60-STEP POSITION FORECAST METRICS - 3D TRAJECTORY DISTANCE
+Plain GRU            point_RMSE=2.011 m  mean_window=0.929 m  p99=10.316 m  >threshold=6,931/655,400 (1.0575%)
+GRU-RK4              point_RMSE=2.026 m  mean_window=0.891 m  p99=10.170 m  >threshold=6,786/655,400 (1.0354%)
+GRU-RK4 + physics    point_RMSE=1.453 m  mean_window=0.691 m  p99=5.173 m  >threshold=1,591/655,400 (0.2428%)
+Gated GRU-RK4 + physics point_RMSE=1.683 m  mean_window=0.509 m  p99=6.132 m  >threshold=2,847/655,400 (0.4344%)
+Gated GRU-RK4 + physics (smooth) point_RMSE=1.757 m  mean_window=0.497 m  p99=6.357 m  >threshold=3,160/655,400 (0.4821%)
+Polynomial           point_RMSE=18.624 m  mean_window=6.798 m  p99=97.239 m  >threshold=124,414/655,400 (18.9829%)
+RK4 only             point_RMSE=14.240 m  mean_window=13.326 m  p99=26.252 m  >threshold=561,259/655,400 (85.6361%)
+Last acceleration    point_RMSE=3.956 m  mean_window=0.949 m  p99=16.535 m  >threshold=16,271/655,400 (2.4826%)
+Oracle acceleration  point_RMSE=0.695 m  mean_window=0.169 m  p99=1.508 m  >threshold=362/655,400 (0.0552%)
+
+Gated GRU-RK4 + physics (smooth) POSITION BY AXIS
+X   point_RMSE=1.200 m  p99_window=3.351 m  >threshold=1,569/655,400 (0.2394%)
+Y   point_RMSE=1.029 m  p99_window=3.233 m  >threshold=1,340/655,400 (0.2045%)
+Z   point_RMSE=0.766 m  p99_window=3.534 m  >threshold=184/655,400 (0.0281%)
+3D  point_RMSE=1.757 m  p99_window=6.357 m  >threshold=3,160/655,400 (0.4821%)
+
+ACCELERATION METRICS BY AXIS
+Plain GRU            X_RMSE=1.4889  Y_RMSE=0.9990  Z_RMSE=1.8395  vector_RMSE=2.5688
+GRU-RK4              X_RMSE=1.5517  Y_RMSE=1.1107  Z_RMSE=1.7850  vector_RMSE=2.6130
+GRU-RK4 + physics    X_RMSE=1.5211  Y_RMSE=1.0772  Z_RMSE=1.4711  vector_RMSE=2.3745
+Gated GRU-RK4 + physics X_RMSE=1.6886  Y_RMSE=1.2430  Z_RMSE=1.1269  vector_RMSE=2.3804
+Gated GRU-RK4 + physics (smooth) X_RMSE=1.7234  Y_RMSE=1.2506  Z_RMSE=1.1000  vector_RMSE=2.3967
+RK4 only             X_RMSE=2.2398  Y_RMSE=1.3710  Z_RMSE=9.3573  vector_RMSE=9.7189
+Last acceleration    X_RMSE=2.5989  Y_RMSE=1.6238  Z_RMSE=2.5847  vector_RMSE=4.0090
+
+FINAL DIFFERENCE IN LANDING - ENDPOINT 3D DISTANCE
+(Each horizon is a forecast ending at the recorded final position.)
+   60 samples (~2.5s)  flights=412  3D_RMSE=0.251 m  XY_spot_RMSE=0.213 m  p95_3D=0.520 m  >threshold=0/412  actual_terminal_|Z|_median=16.960 m

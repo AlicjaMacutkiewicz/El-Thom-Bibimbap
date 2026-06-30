@@ -1,0 +1,46 @@
+REAL FLIGHT REPLAY SUMMARY - Z AXIS ONLY
+Flight: /home/emilia_lukasiuk/Rocket-trajectory-predictor/source_data/far_out_26_data/converted/flight_far_out_26.parquet
+Parameters: /home/emilia_lukasiuk/Rocket-trajectory-predictor/source_data/R7_SIMLE/R7_ROBUSTNESS/parameters.json
+Thrust curve: /home/emilia_lukasiuk/Rocket-trajectory-predictor/source_data/R7_SIMLE/R7_OUTPUT/thrust_source.csv
+Scalers: /home/emilia_lukasiuk/final_12_param_all_gates_synth_eval/reconstructed_scalers.npz
+Axis maps: acc=X,Z,-Y, gyro=X,Z,-Y
+Launch conditions: oxidizer_fraction=0.557244, pressure_scale=0.850000, rocket_mass_scale=1.000000
+Rows after downsampling: 1,349
+Downsample: 5  dt_median=0.05000s
+Prediction window: 60 samples (~2.95s)
+Windows evaluated: 1,169
+Position threshold: >10.0 m window RMSE
+Acceleration threshold: >5.0 window RMSE
+
+Vertical UKF baseline:
+  state=[z, vz, az], measurements during spin-up=[z, az], cut-off=predict-only
+  measurement std: altitude=2 m, acceleration=1 m/s^2
+  process jerk std=4 m/s^3
+
+Z POSITION FORECAST METRICS
+Plain GRU            point_RMSE=10.978 m  mean_window=8.075 m  p95=21.230 m  p99=31.343 m  >threshold=355/1,169 (30.368%)
+GRU-RK4              point_RMSE=10.295 m  mean_window=7.230 m  p95=21.590 m  p99=30.412 m  >threshold=283/1,169 (24.209%)
+GRU-RK4 + physics    point_RMSE=10.573 m  mean_window=7.505 m  p95=21.519 m  p99=31.461 m  >threshold=298/1,169 (25.492%)
+Gated GRU-RK4 + physics point_RMSE=9.181 m  mean_window=6.389 m  p95=23.082 m  p99=30.369 m  >threshold=200/1,169 (17.109%)
+Gated GRU-RK4 + physics (smooth) point_RMSE=7.298 m  mean_window=4.747 m  p95=17.200 m  p99=30.254 m  >threshold=93/1,169 (7.956%)
+Vertical UKF         point_RMSE=13.100 m  mean_window=7.716 m  p95=33.721 m  p99=51.890 m  >threshold=238/1,169 (20.359%)
+Polynomial           point_RMSE=22.159 m  mean_window=11.909 m  p95=57.488 m  p99=88.407 m  >threshold=333/1,169 (28.486%)
+RK4 only             point_RMSE=19.965 m  mean_window=17.973 m  p95=29.294 m  p99=44.173 m  >threshold=961/1,169 (82.207%)
+Last acceleration    point_RMSE=7.596 m  mean_window=4.915 m  p95=17.334 m  p99=30.723 m  >threshold=104/1,169 (8.896%)
+Oracle acceleration  point_RMSE=7.632 m  mean_window=4.918 m  p95=17.338 m  p99=30.723 m  >threshold=110/1,169 (9.410%)
+
+Z ACCELERATION FORECAST METRICS
+Plain GRU            point_RMSE=4.059  point_MAE=2.662  mean_window=2.810  p95=9.990  >threshold=200/1,169 (17.109%)
+GRU-RK4              point_RMSE=3.612  point_MAE=1.803  mean_window=1.893  p95=10.424  >threshold=155/1,169 (13.259%)
+GRU-RK4 + physics    point_RMSE=3.825  point_MAE=2.380  mean_window=2.586  p95=9.917  >threshold=161/1,169 (13.772%)
+Gated GRU-RK4 + physics point_RMSE=3.430  point_MAE=1.964  mean_window=2.130  p95=7.711  >threshold=89/1,169 (7.613%)
+Gated GRU-RK4 + physics (smooth) point_RMSE=1.943  point_MAE=0.866  mean_window=1.101  p95=3.710  >threshold=50/1,169 (4.277%)
+Vertical UKF         point_RMSE=1.616  point_MAE=0.290  mean_window=0.376  p95=2.076  >threshold=45/1,169 (3.849%)
+RK4 only             point_RMSE=9.210  point_MAE=8.661  mean_window=8.743  p95=9.848  >threshold=1,041/1,169 (89.050%)
+Last acceleration    point_RMSE=1.610  point_MAE=0.282  mean_window=0.368  p95=1.655  >threshold=45/1,169 (3.849%)
+
+INTERPRETATION WARNING
+This is a real-flight proof-of-concept replay using vertical telemetry-derived references.
+The vertical UKF is a classical Z-axis state-estimation baseline, not a trained model.
+Coarse GNSS-derived X/Y/Z diagnostics are approximate and do not validate exact full 3D trajectory accuracy.
+The envelope plots summarize overlapping forecast windows; they are not calibrated uncertainty intervals.
