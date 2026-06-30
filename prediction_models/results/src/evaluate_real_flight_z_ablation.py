@@ -32,6 +32,7 @@ import json
 import os
 import sys
 import tempfile
+import textwrap
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -805,6 +806,14 @@ def method_key(method: str) -> str:
     return "_".join(part for part in key.split("_") if part)
 
 
+def wrapped_label(label: str, width: int = 18) -> str:
+    return "\n".join(textwrap.wrap(label, width=width, break_long_words=False)) or label
+
+
+def wrapped_labels(labels: list[str], width: int = 18) -> list[str]:
+    return [wrapped_label(label, width=width) for label in labels]
+
+
 def build_prediction_envelopes(
     model_specs: list[ModelSpec],
     model_positions: dict[str, np.ndarray],
@@ -1432,15 +1441,15 @@ def render_plots(
         if method in position
     ]
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(17, 6))
     axes[0].bar(
         comparison,
         [position[method]["mean_window_rmse"] for method in comparison],
         color=[COLORS[method] for method in comparison],
     )
-    axes[0].set_title("Real Flight Z Position Mean Window RMSE")
     axes[0].set_ylabel("Mean window RMSE (m)")
-    axes[0].tick_params(axis="x", rotation=25)
+    axes[0].set_xticks(range(len(comparison)), wrapped_labels(comparison))
+    axes[0].tick_params(axis="x", rotation=0)
     axes[0].grid(axis="y", alpha=0.3)
 
     axes[1].bar(
@@ -1448,25 +1457,28 @@ def render_plots(
         [position[method]["failure_rate_pct"] for method in comparison],
         color=[COLORS[method] for method in comparison],
     )
-    axes[1].set_title("Z Position Threshold Failure Rate")
     axes[1].set_ylabel(f"Windows > {args.position_threshold:g} m (%)")
-    axes[1].tick_params(axis="x", rotation=25)
+    axes[1].set_xticks(range(len(comparison)), wrapped_labels(comparison))
+    axes[1].tick_params(axis="x", rotation=0)
     axes[1].grid(axis="y", alpha=0.3)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "z_position_ablation_comparison.png", dpi=180)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(13, 6))
     ax.bar(
         summary["acceleration_methods"],
         [acceleration[method]["mean_window_rmse"] for method in summary["acceleration_methods"]],
         color=[COLORS[method] for method in summary["acceleration_methods"]],
     )
-    ax.set_title("Real Flight Z Acceleration Mean Window RMSE")
     ax.set_ylabel("Mean window RMSE")
-    ax.tick_params(axis="x", rotation=25)
+    ax.set_xticks(
+        range(len(summary["acceleration_methods"])),
+        wrapped_labels(summary["acceleration_methods"]),
+    )
+    ax.tick_params(axis="x", rotation=0)
     ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.6)
     fig.savefig(args.output_dir / "z_acceleration_ablation_comparison.png", dpi=180)
     plt.close(fig)
 
@@ -1477,15 +1489,15 @@ def render_plots(
             for method in summary["coarse_gnss_3d_methods"]
             if method != "Oracle acceleration"
         ]
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(17, 6))
         axes[0].bar(
             comparison_3d,
             [coarse_3d[method]["mean_window_rmse_m"] for method in comparison_3d],
             color=[COLORS[method] for method in comparison_3d],
         )
-        axes[0].set_title("Coarse GNSS 3D Mean Window RMSE")
         axes[0].set_ylabel("Mean window RMSE (m)")
-        axes[0].tick_params(axis="x", rotation=25)
+        axes[0].set_xticks(range(len(comparison_3d)), wrapped_labels(comparison_3d))
+        axes[0].tick_params(axis="x", rotation=0)
         axes[0].grid(axis="y", alpha=0.3)
 
         axes[1].bar(
@@ -1493,17 +1505,17 @@ def render_plots(
             [coarse_3d[method]["failure_rate_pct"] for method in comparison_3d],
             color=[COLORS[method] for method in comparison_3d],
         )
-        axes[1].set_title("Coarse GNSS 3D Threshold Failure Rate")
         axes[1].set_ylabel(f"Windows > {args.position_threshold:g} m (%)")
-        axes[1].tick_params(axis="x", rotation=25)
+        axes[1].set_xticks(range(len(comparison_3d)), wrapped_labels(comparison_3d))
+        axes[1].tick_params(axis="x", rotation=0)
         axes[1].grid(axis="y", alpha=0.3)
-        fig.tight_layout()
+        fig.tight_layout(pad=1.6, w_pad=2.0)
         fig.savefig(args.output_dir / "coarse_gnss_3d_ablation_comparison.png", dpi=180)
         plt.close(fig)
 
     if rows:
         data = pd.DataFrame(rows)
-        fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
+        fig, axes = plt.subplots(2, 1, figsize=(17, 9.5), sharex=True)
         for method in [
             GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
             GRU_RK4_PHYS_GATE_METHOD,
@@ -1526,10 +1538,8 @@ def render_plots(
                 label=method,
             )
         axes[0].axhline(args.position_threshold, color="black", linestyle="--", linewidth=1)
-        axes[0].set_title("Window Error Over Real Flight")
         axes[0].set_ylabel("Z position RMSE (m)")
         axes[0].grid(alpha=0.3)
-        axes[0].legend()
 
         for method in [
             GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
@@ -1555,8 +1565,23 @@ def render_plots(
         axes[1].set_xlabel("Prediction start time (s)")
         axes[1].set_ylabel("Z acceleration RMSE")
         axes[1].grid(alpha=0.3)
-        axes[1].legend()
-        fig.tight_layout()
+        handles: list = []
+        labels: list[str] = []
+        for axis in axes:
+            axis_handles, axis_labels = axis.get_legend_handles_labels()
+            for handle, label in zip(axis_handles, axis_labels, strict=False):
+                if label not in labels:
+                    handles.append(handle)
+                    labels.append(label)
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.995),
+            ncol=min(4, max(1, len(labels))),
+            frameon=False,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, h_pad=2.0)
         fig.savefig(args.output_dir / "z_window_error_timeline.png", dpi=180)
         plt.close(fig)
 
@@ -1596,7 +1621,7 @@ def render_plots(
     fig, axes = plt.subplots(
         3,
         len(neural_methods),
-        figsize=(5.2 * len(neural_methods), 11),
+        figsize=(5.8 * len(neural_methods), 12.2),
         sharex=True,
         squeeze=False,
     )
@@ -1642,14 +1667,22 @@ def render_plots(
                 bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
             )
             if row_index == 0:
-                axis.set_title(method)
+                axis.text(
+                    0.50,
+                    0.98,
+                    wrapped_label(method, width=20),
+                    transform=axis.transAxes,
+                    ha="center",
+                    va="top",
+                    fontsize=10,
+                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+                )
             if column_index == 0:
                 axis.set_ylabel(axis_descriptions[axis_name])
             if row_index == 2:
                 axis.set_xlabel("Forecast lead time (s)")
             axis.grid(alpha=0.25)
     axes[0, 0].legend(loc="lower left", fontsize=8)
-    fig.suptitle("Real-Flight Forecast Envelopes Across Overlapping Cut-Off Windows", y=0.995)
     fig.text(
         0.5,
         0.005,
@@ -1657,7 +1690,7 @@ def render_plots(
         ha="center",
         fontsize=9,
     )
-    fig.tight_layout(rect=(0, 0.025, 1, 0.98))
+    fig.tight_layout(rect=(0, 0.035, 1, 1), pad=1.6, h_pad=2.0, w_pad=1.8)
     fig.savefig(args.output_dir / "xyz_prediction_envelopes_by_model.png", dpi=200)
     fig.savefig(args.output_dir / "xyz_prediction_envelopes_by_model.pdf")
     plt.close(fig)
@@ -1665,7 +1698,7 @@ def render_plots(
     fig, axes = plt.subplots(
         1,
         len(neural_methods),
-        figsize=(5.2 * len(neural_methods), 4.8),
+        figsize=(5.8 * len(neural_methods), 5.6),
         sharex=True,
         sharey=True,
         squeeze=False,
@@ -1699,7 +1732,16 @@ def render_plots(
         )
         axis.plot(lead, median, color=COLORS[method], linewidth=2, label="Median error")
         axis.axhline(0.0, color="black", linewidth=0.8)
-        axis.set_title(method)
+        axis.text(
+            0.50,
+            0.98,
+            wrapped_label(method, width=20),
+            transform=axis.transAxes,
+            ha="center",
+            va="top",
+            fontsize=10,
+            bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+        )
         axis.set_xlabel("Forecast lead time (s)")
         axis.grid(alpha=0.25)
         peak_index = int(item["max_abs_m"].to_numpy(dtype=float).argmax())
@@ -1715,7 +1757,6 @@ def render_plots(
         )
     axes[0, 0].set_ylabel("Z position error (m)")
     axes[0, 0].legend(loc="lower left", fontsize=8)
-    fig.suptitle("Vertical Drift Growth Over the Real-Flight Forecast Horizon")
     fig.text(
         0.5,
         0.01,
@@ -1723,12 +1764,12 @@ def render_plots(
         ha="center",
         fontsize=9,
     )
-    fig.tight_layout(rect=(0, 0.04, 1, 0.94))
+    fig.tight_layout(rect=(0, 0.07, 1, 1), pad=1.6, w_pad=1.8)
     fig.savefig(args.output_dir / "z_drift_envelopes_by_model.png", dpi=200)
     fig.savefig(args.output_dir / "z_drift_envelopes_by_model.pdf")
     plt.close(fig)
 
-    fig, axes = plt.subplots(2, 3, figsize=(15, 8), sharex="col")
+    fig, axes = plt.subplots(2, 3, figsize=(17, 8.8), sharex="col")
     for column_index, axis_name in enumerate(["X", "Y", "Z"]):
         for method in neural_methods:
             item = envelopes[
@@ -1749,14 +1790,30 @@ def render_plots(
                 linewidth=2,
                 label=method,
             )
-        axes[0, column_index].set_title(f"{axis_name} axis")
+        axes[0, column_index].text(
+            0.50,
+            0.98,
+            f"{axis_name} axis",
+            transform=axes[0, column_index].transAxes,
+            ha="center",
+            va="top",
+            fontsize=10,
+            bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+        )
         axes[0, column_index].set_ylabel("Central 90% width (m)")
         axes[1, column_index].set_ylabel("Maximum absolute value (m)")
         axes[1, column_index].set_xlabel("Forecast lead time (s)")
         for axis in axes[:, column_index]:
             axis.grid(alpha=0.25)
-    axes[0, 0].legend(fontsize=8)
-    fig.suptitle("Forecast Spread Width and Maximum Drift by Horizon")
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=min(4, max(1, len(labels))),
+        frameon=False,
+    )
     fig.text(
         0.5,
         0.01,
@@ -1764,7 +1821,7 @@ def render_plots(
         ha="center",
         fontsize=9,
     )
-    fig.tight_layout(rect=(0, 0.035, 1, 0.95))
+    fig.tight_layout(rect=(0, 0.055, 1, 0.89), pad=1.6, h_pad=2.0, w_pad=1.8)
     fig.savefig(args.output_dir / "envelope_width_and_max_drift.png", dpi=200)
     fig.savefig(args.output_dir / "envelope_width_and_max_drift.pdf")
     plt.close(fig)

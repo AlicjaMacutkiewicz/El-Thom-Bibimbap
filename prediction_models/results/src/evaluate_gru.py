@@ -14,6 +14,7 @@ import heapq
 import json
 import random
 import sys
+import textwrap
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -67,6 +68,14 @@ COLORS = {
     "Last acceleration": "#ff7f0e",
     "Oracle acceleration": "#2ca02c",
 }
+
+
+def wrapped_label(label: str, width: int = 18) -> str:
+    return "\n".join(textwrap.wrap(label, width=width, break_long_words=False)) or label
+
+
+def wrapped_labels(labels: list[str], width: int = 18) -> list[str]:
+    return [wrapped_label(label, width=width) for label in labels]
 
 
 def parse_args() -> argparse.Namespace:
@@ -1442,15 +1451,15 @@ def render_plots(
     ]
     position = summary["position_metrics"]
     metric_3d = {method: position[method]["3D"] for method in comparison}
-    fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(16, 6))
     axes[0].bar(
         comparison,
         [metric_3d[m]["point_rmse_m"] for m in comparison],
         color=[COLORS[m] for m in comparison],
     )
     axes[0].set_ylabel("Point RMSE (m)")
-    axes[0].set_title("3D Position Distance RMSE")
-    axes[0].tick_params(axis="x", rotation=20)
+    axes[0].set_xticks(range(len(comparison)), wrapped_labels(comparison))
+    axes[0].tick_params(axis="x", rotation=0)
     axes[0].grid(axis="y", alpha=0.3)
     failure_rates = [metric_3d[m]["failure_rate_pct"] for m in comparison]
     nonzero_rates = [rate for rate in failure_rates if rate > 0]
@@ -1462,16 +1471,16 @@ def render_plots(
     )
     axes[1].set_yscale("log")
     axes[1].set_ylabel(f"Windows with RMSE > {args.threshold:g} m (%) - log scale")
-    axes[1].set_title("Threshold Failure Rate")
-    axes[1].tick_params(axis="x", rotation=20)
+    axes[1].set_xticks(range(len(comparison)), wrapped_labels(comparison))
+    axes[1].tick_params(axis="x", rotation=0)
     axes[1].grid(axis="y", alpha=0.3)
     for index, rate in enumerate(failure_rates):
         axes[1].text(index, max(rate, display_floor), f"{rate:.4g}%", ha="center", va="bottom")
-    fig.tight_layout()
+    fig.tight_layout(pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "baseline_comparison.png", dpi=180)
     plt.close(fig)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig, axes = plt.subplots(1, 2, figsize=(17, 6))
     axis_labels = ["X", "Y", "Z", "3D"]
     bar_width = 0.8 / max(len(comparison), 1)
     x = np.arange(len(axis_labels))
@@ -1492,20 +1501,26 @@ def render_plots(
         )
     axes[0].set_xticks(x, axis_labels)
     axes[0].set_ylabel("Position RMSE (m)")
-    axes[0].set_title("Position Error by Axis and 3D Distance")
     axes[0].grid(axis="y", alpha=0.3)
     axes[1].set_xticks(x, axis_labels)
     axes[1].set_yscale("symlog", linthresh=0.001)
     axes[1].set_ylabel(f"Windows > {args.threshold:g} m (%)")
-    axes[1].set_title("Threshold Failures by Axis")
     axes[1].grid(axis="y", alpha=0.3)
-    axes[0].legend()
-    fig.tight_layout()
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.99),
+        ncol=min(4, max(1, len(labels))),
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.86), pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "position_axis_comparison.png", dpi=180)
     plt.close(fig)
 
     acceleration = summary["acceleration_metrics"]
-    fig, ax = plt.subplots(figsize=(10, 5))
+    fig, ax = plt.subplots(figsize=(13, 6))
     acc_methods = [
         method
         for method in summary["neural_methods"] + ["RK4 only", "Last acceleration"]
@@ -1524,14 +1539,18 @@ def render_plots(
         )
     ax.set_xticks(np.arange(4), acceleration_labels)
     ax.set_ylabel("Acceleration RMSE")
-    ax.set_title("Acceleration Error by Axis")
     ax.grid(axis="y", alpha=0.3)
-    ax.legend()
-    fig.tight_layout()
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.15),
+        ncol=min(4, max(1, len(acc_methods))),
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.90), pad=1.6)
     fig.savefig(args.output_dir / "acceleration_axis_comparison.png", dpi=180)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(11, 6))
     for method in comparison:
         key = method_key(method)
         values = np.array([float(row[f"{key}_3d_mean_window_rmse_m"]) for row in rows])
@@ -1541,23 +1560,21 @@ def render_plots(
     ax.set_xscale("log")
     ax.set_xlabel(f"Per-flight mean {forecast_label} 3D distance RMSE (m) - log scale")
     ax.set_ylabel("Fraction of flights")
-    ax.set_title("Per-Flight Error Distribution")
     ax.grid(alpha=0.3)
-    ax.legend()
-    fig.tight_layout()
+    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
+    fig.tight_layout(rect=(0, 0, 0.78, 1), pad=1.6)
     fig.savefig(args.output_dir / "per_flight_error_cdf.png", dpi=180)
     plt.close(fig)
 
     key = f"{method_key(primary)}_3d_mean_window_rmse_m"
     worst_rows = sorted(rows, key=lambda row: float(row[key]), reverse=True)[:30]
-    fig, ax = plt.subplots(figsize=(12, 6))
+    fig, ax = plt.subplots(figsize=(13, 7))
     labels = [str(row["file"]).removeprefix("flight_").removesuffix(".parquet") for row in worst_rows][::-1]
     values = [float(row[key]) for row in worst_rows][::-1]
     ax.barh(labels, values, color=COLORS[primary])
     ax.set_xlabel(f"Mean {forecast_label} 3D distance RMSE (m)")
-    ax.set_title(f"30 Hardest Flights for {primary}")
     ax.grid(axis="x", alpha=0.3)
-    fig.tight_layout()
+    fig.tight_layout(pad=1.6)
     fig.savefig(args.output_dir / "hardest_flights.png", dpi=180)
     plt.close(fig)
 
@@ -1567,7 +1584,7 @@ def render_plots(
         for method in summary["neural_methods"] + ["Polynomial", "RK4 only", "Last acceleration"]
         if shown and method in shown[0].predictions
     ]
-    fig, axes = plt.subplots(len(shown), 3, figsize=(16, 3.8 * len(shown)), squeeze=False)
+    fig, axes = plt.subplots(len(shown), 3, figsize=(18, 4.3 * len(shown)), squeeze=False)
     for row_index, item in enumerate(shown):
         for axis_index, axis_label in enumerate(["X", "Y", "Z"]):
             axis = axes[row_index, axis_index]
@@ -1579,17 +1596,34 @@ def render_plots(
                     color=COLORS[method],
                     label=method,
                 )
-            axis.set_title(f"{axis_label}: {item.flight}, 3D RMSE={item.score:.3f} m")
+            if axis_index == 0:
+                axis.text(
+                    0.02,
+                    0.98,
+                    f"{item.flight}\n3D RMSE={item.score:.3f} m",
+                    transform=axis.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=9,
+                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+                )
             axis.set_xlabel("Horizon time (s)")
             axis.set_ylabel(f"{axis_label} position (m)")
             axis.grid(alpha=0.3)
-            if axis_index == 0:
-                axis.legend(loc="best")
-    fig.tight_layout()
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=min(5, max(1, len(labels))),
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93), pad=1.6, h_pad=2.0, w_pad=1.8)
     fig.savefig(args.output_dir / "worst_gru_trajectories.png", dpi=180)
     plt.close(fig)
 
-    fig, axes = plt.subplots(len(illustrative), 3, figsize=(16, 3.8 * len(illustrative)), squeeze=False)
+    fig, axes = plt.subplots(len(illustrative), 3, figsize=(18, 4.3 * len(illustrative)), squeeze=False)
     requested = [0.25, 0.5, 1.0, args.threshold]
     illustrative_methods = [
         method
@@ -1607,15 +1641,30 @@ def render_plots(
                     color=COLORS[method],
                     label=method,
                 )
-            axis.set_title(
-                f"{axis_label}, nearest {target:g}m 3D error: actual={item.score:.3f} m"
-            )
+            if axis_index == 0:
+                axis.text(
+                    0.02,
+                    0.98,
+                    f"nearest {target:g} m\nactual={item.score:.3f} m",
+                    transform=axis.transAxes,
+                    ha="left",
+                    va="top",
+                    fontsize=9,
+                    bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+                )
             axis.set_xlabel("Horizon time (s)")
             axis.set_ylabel(f"{axis_label} position (m)")
             axis.grid(alpha=0.3)
-            if axis_index == 0:
-                axis.legend(loc="best")
-    fig.tight_layout()
+    handles, labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=min(5, max(1, len(labels))),
+        frameon=False,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.93), pad=1.6, h_pad=2.0, w_pad=1.8)
     fig.savefig(args.output_dir / "illustrative_gru_trajectories.png", dpi=180)
     plt.close(fig)
 
@@ -1624,7 +1673,7 @@ def render_plots(
     if valid_horizons:
         valid_horizons.sort(key=lambda item: item["lead_time_seconds_median"])
         leads = [item["lead_time_seconds_median"] for item in valid_horizons]
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(16, 6))
         for method in comparison:
             endpoints = [item["methods"][method]["landing_endpoint_metrics"] for item in valid_horizons]
             axes[0].plot(
@@ -1641,23 +1690,29 @@ def render_plots(
                 color=COLORS[method],
                 label=method,
             )
-        axes[0].set_title("Final Difference in Landing (3D)")
         axes[0].set_ylabel("Endpoint 3D RMSE (m)")
-        axes[1].set_title("Landing Ground-Spot Difference (XY)")
         axes[1].set_ylabel("Endpoint horizontal RMSE (m)")
         for axis in axes:
             axis.set_xlabel("Prediction lead time before landing (s)")
             axis.set_yscale("log")
             axis.grid(alpha=0.3)
-            axis.legend()
-        fig.tight_layout()
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=min(4, max(1, len(labels))),
+            frameon=False,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.86), pad=1.6, w_pad=2.0)
         fig.savefig(args.output_dir / "landing_error_by_horizon.png", dpi=180)
         plt.close(fig)
 
         longest = max(valid_horizons, key=lambda item: item["horizon_samples"])["horizon_samples"]
         longest_rows = [row for row in landing_rows if row["horizon_samples"] == longest]
         primary_key = method_key(primary)
-        fig, ax = plt.subplots(figsize=(9, 7))
+        fig, ax = plt.subplots(figsize=(10, 8))
         for row in longest_rows:
             actual_x, actual_y = row["actual_landing_x"], row["actual_landing_y"]
             pred_x = row[f"{primary_key}_predicted_landing_x"]
@@ -1677,13 +1732,12 @@ def render_plots(
             s=18,
             label=f"{primary} predicted landing",
         )
-        ax.set_title(f"Landing Spots at Longest Horizon ({longest} samples)")
         ax.set_xlabel("Landing X (m)")
         ax.set_ylabel("Landing Y (m)")
         ax.axis("equal")
         ax.grid(alpha=0.3)
-        ax.legend()
-        fig.tight_layout()
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.10), ncol=2, frameon=False)
+        fig.tight_layout(rect=(0, 0, 1, 0.94), pad=1.6)
         fig.savefig(args.output_dir / "landing_spots_longest_horizon.png", dpi=180)
         plt.close(fig)
 
