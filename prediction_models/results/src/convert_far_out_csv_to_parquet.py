@@ -45,7 +45,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("far_out_26_data/converted/flight_far_out_26.parquet"),
+        default=Path("source_data/far_out_26_data/converted/flight_far_out_26.parquet"),
         help="Output parquet path.",
     )
     parser.add_argument(

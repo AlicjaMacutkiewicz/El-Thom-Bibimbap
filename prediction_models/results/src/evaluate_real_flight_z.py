@@ -127,7 +127,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--flight",
         type=Path,
-        default=repo_default / "far_out_26_data" / "converted" / "flight_far_out_26.parquet",
+        default=repo_default  / "source_data" / "far_out_26_data" / "converted" / "flight_far_out_26.parquet",
         help="Converted real-flight parquet from convert_far_out_csv_to_parquet.py.",
     )
     parser.add_argument(
@@ -155,7 +155,7 @@ def parse_args() -> argparse.Namespace:
         "--output-dir",
         type=Path,
         default=None,
-        help="Output directory. Defaults to far_out_26_data/real_flight_z_eval_TIMESTAMP.",
+        help="Output directory. Defaults to source_data/far_out_26_data/real_flight_z_eval_TIMESTAMP.",
     )
     parser.add_argument("--parameters", type=Path, default=None)
     parser.add_argument("--thrust-curve", type=Path, default=None)
@@ -263,7 +263,7 @@ def resolve_paths(args: argparse.Namespace) -> None:
         args.scaler_data_dir = args.scaler_data_dir.expanduser().resolve()
     if args.output_dir is None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output_dir = args.repo / "far_out_26_data" / f"real_flight_z_eval_{stamp}"
+        args.output_dir = args.repo / "source_data" / "far_out_26_data" / f"real_flight_z_eval_{stamp}"
     else:
         args.output_dir = args.output_dir.expanduser().resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)

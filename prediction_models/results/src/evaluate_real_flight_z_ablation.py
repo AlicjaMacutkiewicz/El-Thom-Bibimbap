@@ -207,7 +207,7 @@ def parse_args() -> argparse.Namespace:
         description="Evaluate generalized GRU ablation models on one real flight."
     )
     parser.add_argument("--repo", type=Path, default=repo_default)
-    parser.add_argument("--flight", type=Path, default=repo_default / "far_out_26_data" / "converted" / "flight_far_out_26.parquet")
+    parser.add_argument("--flight", type=Path, default=repo_default /"source_data" /  "far_out_26_data" / "converted" / "flight_far_out_26.parquet")
     parser.add_argument("--gru-model", type=Path, default=None)
     parser.add_argument("--gru-res-model", type=Path, default=None)
     parser.add_argument("--gru-res-phys-model", type=Path, default=None)
@@ -304,7 +304,7 @@ def resolve_paths(args: argparse.Namespace) -> None:
 
     if args.output_dir is None:
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        args.output_dir = args.repo / "far_out_26_data" / f"real_flight_z_ablation_{stamp}"
+        args.output_dir = args.repo / "source_data" /" far_out_26_data" / f"real_flight_z_ablation_{stamp}"
     else:
         args.output_dir = args.output_dir.expanduser().resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)

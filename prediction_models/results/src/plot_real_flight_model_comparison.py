@@ -38,17 +38,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--before-dir",
         type=Path,
-        default=repo / "far_out_26_data" / "real_flight_z_eval_matched_all_models_nonretrained",
+        default=repo / "source_data" / "far_out_26_data" / "real_flight_z_eval_matched_all_models_nonretrained",
     )
     parser.add_argument(
         "--after-dir",
         type=Path,
-        default=repo / "far_out_26_data" / "real_flight_z_eval_conditioned_generalized_axis_mapped",
+        default=repo  / "source_data" / "far_out_26_data" / "real_flight_z_eval_conditioned_generalized_axis_mapped",
     )
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=repo / "far_out_26_data" / "real_flight_comparison_visuals",
+        default=repo  / "source_data" / "far_out_26_data" / "real_flight_comparison_visuals",
     )
     parser.add_argument("--threshold", type=float, default=10.0)
     return parser.parse_args()

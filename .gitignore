@@ -113,7 +113,7 @@ venv.bak/
 .idea
 
 #weather api logs
-source_model/ERA5_weather/
+source_data/ERA5_weather/
 
 #data to test the models
 demo_flight_data/
@@ -121,7 +121,6 @@ demo_flight_data/
 #temp and output files
 testing_data/
 training_data/
-source_data/
 generated_flights.txt
 learning_state.txt
 wandb/
