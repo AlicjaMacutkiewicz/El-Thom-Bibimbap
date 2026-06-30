@@ -51,6 +51,7 @@ from evaluate_gru import (  # noqa: E402  # type: ignore
     CONDITION_COLUMNS,
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_GATE_METHOD,
+    GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
     GRU_RK4_PHYS_METHOD,
     INPUT_COLUMNS,
     LAST_ACC_GRU_METHOD,
@@ -75,6 +76,7 @@ POSITION_METHODS = [
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
     GRU_RK4_PHYS_GATE_METHOD,
+    GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
     LAST_ACC_GRU_METHOD,
     UKF_METHOD,
     "Polynomial",
@@ -87,6 +89,7 @@ ACCELERATION_METHODS = [
     GRU_RK4_METHOD,
     GRU_RK4_PHYS_METHOD,
     GRU_RK4_PHYS_GATE_METHOD,
+    GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
     LAST_ACC_GRU_METHOD,
     UKF_METHOD,
     "RK4 only",
@@ -97,6 +100,7 @@ COLORS = {
     GRU_RK4_METHOD: "#d62728",
     GRU_RK4_PHYS_METHOD: "#8c564b",
     GRU_RK4_PHYS_GATE_METHOD: "#e377c2",
+    GRU_RK4_PHYS_GATE_SMOOTH_METHOD: "#ff9896",
     LAST_ACC_GRU_METHOD: "#7f7f7f",
     UKF_METHOD: "#bcbd22",
     "Polynomial": "#1f77b4",
@@ -212,6 +216,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gru-res-model", type=Path, default=None)
     parser.add_argument("--gru-res-phys-model", type=Path, default=None)
     parser.add_argument("--gru-res-phys-gate-model", type=Path, default=None)
+    parser.add_argument("--gru-res-phys-gate-smooth-model", type=Path, default=None)
     parser.add_argument("--last-acc-gru-model", type=Path, default=None)
     parser.add_argument("--scaler-npz", type=Path, default=None)
     parser.add_argument("--gnss-trajectory", type=Path, default=None)
@@ -281,6 +286,11 @@ def resolve_paths(args: argparse.Namespace) -> None:
         args.gru_res_phys_gate_model = resolve_model_path(
             args.gru_res_phys_gate_model,
             model_root / "gru_res_phys_persist_gate.pth",
+        )
+    if args.gru_res_phys_gate_smooth_model is not None:
+        args.gru_res_phys_gate_smooth_model = resolve_model_path(
+            args.gru_res_phys_gate_smooth_model,
+            model_root / "gru_res_phys_gate_smooth.pth",
         )
     if args.last_acc_gru_model is not None:
         args.last_acc_gru_model = resolve_model_path(
@@ -938,6 +948,11 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
                 "persistence_gated_residual",
             ),
             (
+                GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
+                args.gru_res_phys_gate_smooth_model,
+                "persistence_gated_residual",
+            ),
+            (
                 LAST_ACC_GRU_METHOD,
                 args.last_acc_gru_model,
                 "last_acc_gated_delta",
@@ -1490,6 +1505,7 @@ def render_plots(
         data = pd.DataFrame(rows)
         fig, axes = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
         for method in [
+            GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
             GRU_RK4_PHYS_GATE_METHOD,
             LAST_ACC_GRU_METHOD,
             UKF_METHOD,
@@ -1516,6 +1532,7 @@ def render_plots(
         axes[0].legend()
 
         for method in [
+            GRU_RK4_PHYS_GATE_SMOOTH_METHOD,
             GRU_RK4_PHYS_GATE_METHOD,
             LAST_ACC_GRU_METHOD,
             UKF_METHOD,
