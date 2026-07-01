@@ -69,7 +69,6 @@ In classical telemetry, losing the signal results in losing all knowledge of the
 **Project Team**: Alicja Macutkiewicz, Weronika Marszalik, Paweł Leczkowski, Wiktor Ludwichowski, Emilia Łukasiuk
 
 ---
----
 <details>
 <summary><b> Polish Version (click here)</b></summary>
 
