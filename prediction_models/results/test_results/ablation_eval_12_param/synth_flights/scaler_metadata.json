@@ -8,7 +8,7 @@
   "split_seed": 41,
   "train_ratio": 0.8,
   "broken_files": [],
-  "runtime_seconds": 73.95934557914734,
+  "runtime_seconds": 73.51490354537964,
   "exact_expected_file_count_present": true,
   "input_columns": [
     "Best_Acc_X",

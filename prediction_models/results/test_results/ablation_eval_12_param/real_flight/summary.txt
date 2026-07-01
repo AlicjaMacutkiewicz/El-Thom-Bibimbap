@@ -11,6 +11,7 @@ Prediction window: 60 samples (~2.95s)
 Windows evaluated: 1,169
 Position threshold: >10.0 m window RMSE
 Acceleration threshold: >5.0 window RMSE
+Synthetic comparison summary: /home/emilia_lukasiuk/final_12_param_all_gates_synth_eval/summary.json
 
 Vertical UKF baseline:
   state=[z, vz, az], measurements during spin-up=[z, az], cut-off=predict-only
@@ -38,6 +39,17 @@ Gated GRU-RK4 + physics (smooth) point_RMSE=1.943  point_MAE=0.866  mean_window=
 Vertical UKF         point_RMSE=1.616  point_MAE=0.290  mean_window=0.376  p95=2.076  >threshold=45/1,169 (3.849%)
 RK4 only             point_RMSE=9.210  point_MAE=8.661  mean_window=8.743  p95=9.848  >threshold=1,041/1,169 (89.050%)
 Last acceleration    point_RMSE=1.610  point_MAE=0.282  mean_window=0.368  p95=1.655  >threshold=45/1,169 (3.849%)
+
+MODEL INFERENCE AND FIRST REAL-FLIGHT FORECAST ARRIVAL
+Plain GRU                      mean=0.0888 ms/window  first_available≈5.950s after flight start
+GRU-RK4                        mean=0.0444 ms/window  first_available≈5.950s after flight start
+GRU-RK4 + physics              mean=0.0444 ms/window  first_available≈5.950s after flight start
+Gated GRU-RK4 + physics        mean=0.0445 ms/window  first_available≈5.950s after flight start
+Gated GRU-RK4 + physics (smooth) mean=0.0445 ms/window  first_available≈5.950s after flight start
+
+PERSISTENCE GATE MEAN - 0=PERSISTENCE, 1=LEARNED BRANCH
+Gated GRU-RK4 + physics        X=0.858  Y=0.779  Z=0.744
+Gated GRU-RK4 + physics (smooth) X=0.425  Y=0.369  Z=0.061
 
 INTERPRETATION WARNING
 This is a real-flight proof-of-concept replay using vertical telemetry-derived references.

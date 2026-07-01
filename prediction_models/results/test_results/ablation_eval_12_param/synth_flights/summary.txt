@@ -12,7 +12,7 @@ RK4 thrust curve: /home/emilia_lukasiuk/Rocket-trajectory-predictor/source_data/
 Windows evaluated: 655,400
 History window: 120 samples (~5.09s median)
 Prediction window: 60 samples (~2.52s median)
-Runtime: 1.51 minutes
+Runtime: 1.53 minutes
 Failure threshold: >10.0 m window RMSE
 
 60-STEP POSITION FORECAST METRICS - 3D TRAJECTORY DISTANCE
@@ -40,6 +40,17 @@ Gated GRU-RK4 + physics X_RMSE=1.6886  Y_RMSE=1.2430  Z_RMSE=1.1269  vector_RMSE
 Gated GRU-RK4 + physics (smooth) X_RMSE=1.7234  Y_RMSE=1.2506  Z_RMSE=1.1000  vector_RMSE=2.3967
 RK4 only             X_RMSE=2.2398  Y_RMSE=1.3710  Z_RMSE=9.3573  vector_RMSE=9.7189
 Last acceleration    X_RMSE=2.5989  Y_RMSE=1.6238  Z_RMSE=2.5847  vector_RMSE=4.0090
+
+MODEL INFERENCE TIME
+Plain GRU                      mean=0.0170 ms/window  throughput=58939.7 windows/s
+GRU-RK4                        mean=0.0168 ms/window  throughput=59695.6 windows/s
+GRU-RK4 + physics              mean=0.0167 ms/window  throughput=59792.1 windows/s
+Gated GRU-RK4 + physics        mean=0.0168 ms/window  throughput=59520.9 windows/s
+Gated GRU-RK4 + physics (smooth) mean=0.0168 ms/window  throughput=59451.1 windows/s
+
+PERSISTENCE GATE MEAN - 0=PERSISTENCE, 1=LEARNED BRANCH
+Gated GRU-RK4 + physics        X=0.224  Y=0.225  Z=0.088
+Gated GRU-RK4 + physics (smooth) X=0.342  Y=0.333  Z=0.090
 
 FINAL DIFFERENCE IN LANDING - ENDPOINT 3D DISTANCE
 (Each horizon is a forecast ending at the recorded final position.)
