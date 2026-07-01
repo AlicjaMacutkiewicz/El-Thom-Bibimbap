@@ -31,6 +31,19 @@ METHODS = {
     },
 }
 
+LEGEND_STYLE = {
+    "frameon": False,
+    "fontsize": 12,
+    "handlelength": 1.8,
+    "handleheight": 1.1,
+    "columnspacing": 1.6,
+    "labelspacing": 0.8,
+}
+
+
+def legend_columns(item_count: int, max_columns: int = 4) -> int:
+    return min(max_columns, max(1, item_count))
+
 
 def parse_args() -> argparse.Namespace:
     repo = Path(__file__).resolve().parents[3]
@@ -110,11 +123,9 @@ def plot_summary(
         values = method_series(name, before, after, "position")
         axes[0, 0].plot(times, values, color=style["color"], linewidth=1.25, label=name)
     axes[0, 0].axhline(args.threshold, color="black", linestyle="--", linewidth=1.2)
-    axes[0, 0].set_title("100-step Z-position error over the real flight")
     axes[0, 0].set_xlabel("Prediction start time (s)")
     axes[0, 0].set_ylabel("Window RMSE (m)")
     axes[0, 0].grid(alpha=0.25)
-    axes[0, 0].legend(fontsize=8)
 
     for name, style in METHODS.items():
         values = np.sort(method_series(name, before, after, "position"))
@@ -122,7 +133,6 @@ def plot_summary(
         axes[0, 1].plot(values, fraction, color=style["color"], linewidth=2, label=name)
     axes[0, 1].axvline(args.threshold, color="black", linestyle="--", linewidth=1.2)
     axes[0, 1].set_xscale("log")
-    axes[0, 1].set_title("Distribution of 100-step Z-position error")
     axes[0, 1].set_xlabel("Window RMSE (m), logarithmic scale")
     axes[0, 1].set_ylabel("Fraction of prediction windows")
     axes[0, 1].grid(alpha=0.25)
@@ -146,14 +156,12 @@ def plot_summary(
     )
     axes[1, 0].set_xticks(x, labels, rotation=12)
     axes[1, 0].set_ylabel("Z-position window RMSE (m)")
-    axes[1, 0].set_title("Average and high-tail position error")
     axes[1, 0].grid(axis="y", alpha=0.25)
-    axes[1, 0].legend()
+    axes[1, 0].legend(loc="upper center", **LEGEND_STYLE)
 
     failures = [float(row["position_failure_rate_pct"]) for row in rows]
     bars = axes[1, 1].bar(labels, failures, color=colors)
     axes[1, 1].set_ylabel(f"Windows with RMSE > {args.threshold:g} m (%)")
-    axes[1, 1].set_title("Threshold failure rate")
     axes[1, 1].tick_params(axis="x", rotation=12)
     axes[1, 1].grid(axis="y", alpha=0.25)
     for bar, value in zip(bars, failures, strict=True):
@@ -165,12 +173,16 @@ def plot_summary(
             va="bottom",
         )
 
-    fig.suptitle(
-        "FAR-OUT 2026 real-flight Z-axis replay\n"
-        "1,486 overlapping windows, 100-step forecast (3.96 s)",
-        fontsize=15,
+    handles, legend_labels = axes[0, 0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        legend_labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=legend_columns(len(legend_labels)),
+        **LEGEND_STYLE,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.94))
+    fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, h_pad=2.0, w_pad=1.8)
     save_figure(fig, args.output_dir, "real_flight_before_after_summary")
 
 
@@ -193,18 +205,23 @@ def plot_timeline(
             color=style["color"],
             linewidth=1.25,
             label=name,
-        )
+    )
     axes[0].axhline(args.threshold, color="black", linestyle="--", linewidth=1.1)
     axes[0].set_ylabel("Z-position window RMSE (m)")
-    axes[0].set_title("Position error")
     axes[1].set_ylabel("Z-acceleration window RMSE")
     axes[1].set_xlabel("Prediction start time (s)")
-    axes[1].set_title("Acceleration error")
     for axis in axes:
         axis.grid(alpha=0.25)
-        axis.legend(fontsize=8)
-    fig.suptitle("Real-flight 100-step prediction error before and after conditioning", fontsize=15)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    handles, legend_labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        legend_labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=legend_columns(len(legend_labels)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, h_pad=2.0)
     save_figure(fig, args.output_dir, "real_flight_before_after_timeline")
 
 

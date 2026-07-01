@@ -27,6 +27,7 @@ import numpy as np
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+from matplotlib.patches import Patch
 
 SENSOR_COLUMNS = [
     "Best_Acc_X",
@@ -68,6 +69,19 @@ COLORS = {
     "Last acceleration": "#ff7f0e",
     "Oracle acceleration": "#2ca02c",
 }
+
+LEGEND_STYLE = {
+    "frameon": False,
+    "fontsize": 12,
+    "handlelength": 1.8,
+    "handleheight": 1.1,
+    "columnspacing": 1.6,
+    "labelspacing": 0.8,
+}
+
+
+def legend_columns(item_count: int, max_columns: int = 4) -> int:
+    return min(max_columns, max(1, item_count))
 
 
 def wrapped_label(label: str, width: int = 18) -> str:
@@ -403,6 +417,13 @@ class ModelSpec:
     name: str
     path: Path
     output_mode: str  # "direct" predicts total acceleration, "residual" predicts x_total - x_b
+
+
+@dataclass
+class PredictionBatchResult:
+    accelerations: dict[str, np.ndarray]
+    gates: dict[str, np.ndarray] = field(default_factory=dict)
+    timings: dict[str, dict[str, float | int]] = field(default_factory=dict)
 
 
 class PredictionOnly(torch.nn.Module):
@@ -774,18 +795,36 @@ def predict_normalized(
     batch_size: int,
     device: torch.device,
     amp: bool,
-) -> np.ndarray:
+) -> tuple[np.ndarray, dict[str, float | int]]:
     outputs: list[np.ndarray] = []
     amp_enabled = amp and device.type == "cuda"
+    elapsed_seconds = 0.0
+    batches = 0
     with torch.inference_mode():
         for start in range(0, len(inputs), batch_size):
             normalized = ((inputs[start : start + batch_size] - mean_in) / std_in).astype(np.float32)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            batch_start = time.perf_counter()
             tensor = torch.from_numpy(normalized).to(device, non_blocking=True)
             with torch.autocast(device_type="cuda", dtype=torch.float16, enabled=amp_enabled):
                 result = model(tensor, pred_len=pred_len)
                 prediction = result[0] if isinstance(result, tuple) else result
             outputs.append(prediction.float().cpu().numpy())
-    return np.concatenate(outputs, axis=0)
+            if device.type == "cuda":
+                torch.cuda.synchronize(device)
+            elapsed_seconds += time.perf_counter() - batch_start
+            batches += 1
+    windows = int(len(inputs))
+    mean_seconds = elapsed_seconds / max(windows, 1)
+    return np.concatenate(outputs, axis=0), {
+        "windows": windows,
+        "batches": int(batches),
+        "total_inference_seconds": float(elapsed_seconds),
+        "mean_seconds_per_window": float(mean_seconds),
+        "mean_milliseconds_per_window": float(mean_seconds * 1000.0),
+        "throughput_windows_per_second": float(windows / elapsed_seconds) if elapsed_seconds > 0 else 0.0,
+    }
 
 
 def predict_model_accelerations(
@@ -804,10 +843,12 @@ def predict_model_accelerations(
     device: torch.device,
     amp: bool,
     last_acceleration: np.ndarray | None = None,
-) -> dict[str, np.ndarray]:
+) -> PredictionBatchResult:
     predictions = {}
+    gates = {}
+    timings = {}
     for spec in model_specs:
-        normalized = predict_normalized(
+        normalized, timing = predict_normalized(
             models[spec.name],
             input_windows,
             mean_in,
@@ -817,6 +858,9 @@ def predict_model_accelerations(
             device,
             amp,
         )
+        timing["seq_len"] = int(input_windows.shape[1])
+        timing["pred_len"] = int(pred_len)
+        timings[spec.name] = timing
         if spec.output_mode == "direct":
             predictions[spec.name] = normalized * std_acc + mean_acc
         elif spec.output_mode == "residual":
@@ -832,6 +876,7 @@ def predict_model_accelerations(
             gate = 1.0 / (1.0 + np.exp(-gate_logits))
             anchor = np.repeat(last_acceleration[:, None, :], pred_len, axis=1)
             predictions[spec.name] = anchor + gate * (learned_candidate - anchor)
+            gates[spec.name] = gate.astype(np.float32, copy=False)
         elif spec.output_mode == "last_acc_gated_delta":
             if normalized.shape[-1] != 6:
                 raise ValueError(f"{spec.name} must emit 3 acceleration deltas and 3 gate logits.")
@@ -842,9 +887,107 @@ def predict_model_accelerations(
             gate = 1.0 / (1.0 + np.exp(-gate_logits))
             anchor = np.repeat(last_acceleration[:, None, :], pred_len, axis=1)
             predictions[spec.name] = anchor + gate * delta
+            gates[spec.name] = gate.astype(np.float32, copy=False)
         else:
             raise ValueError(f"Unknown output mode for {spec.name}: {spec.output_mode}")
-    return predictions
+    return PredictionBatchResult(accelerations=predictions, gates=gates, timings=timings)
+
+
+def merge_inference_timings(
+    totals: dict[str, dict[str, float | int]],
+    timings: dict[str, dict[str, float | int]],
+) -> None:
+    for method, item in timings.items():
+        current = totals.setdefault(
+            method,
+            {
+                "windows": 0,
+                "batches": 0,
+                "total_inference_seconds": 0.0,
+                "seq_len": item.get("seq_len", 0),
+                "pred_len": item.get("pred_len", 0),
+            },
+        )
+        current["windows"] = int(current["windows"]) + int(item.get("windows", 0))
+        current["batches"] = int(current["batches"]) + int(item.get("batches", 0))
+        current["total_inference_seconds"] = float(current["total_inference_seconds"]) + float(
+            item.get("total_inference_seconds", 0.0)
+        )
+        current["seq_len"] = item.get("seq_len", current.get("seq_len", 0))
+        current["pred_len"] = item.get("pred_len", current.get("pred_len", 0))
+
+
+def finalize_inference_timings(
+    totals: dict[str, dict[str, float | int]],
+) -> dict[str, dict[str, float | int | str]]:
+    finalized: dict[str, dict[str, float | int | str]] = {}
+    for method, item in totals.items():
+        windows = int(item.get("windows", 0))
+        total = float(item.get("total_inference_seconds", 0.0))
+        mean_seconds = total / max(windows, 1)
+        finalized[method] = {
+            "seq_len": int(item.get("seq_len", 0)),
+            "pred_len": int(item.get("pred_len", 0)),
+            "windows": windows,
+            "batches": int(item.get("batches", 0)),
+            "total_inference_seconds": total,
+            "mean_seconds_per_window": float(mean_seconds),
+            "mean_milliseconds_per_window": float(mean_seconds * 1000.0),
+            "throughput_windows_per_second": float(windows / total) if total > 0 else 0.0,
+            "timing_scope": (
+                "Batched model input transfer, forward pass, and output materialization; "
+                "evaluation metrics and plotting are excluded."
+            ),
+        }
+    return finalized
+
+
+def merge_gate_summaries(
+    step_sums: dict[str, np.ndarray],
+    window_counts: dict[str, int],
+    gates: dict[str, np.ndarray],
+) -> None:
+    for method, gate in gates.items():
+        current = step_sums.setdefault(method, np.zeros(gate.shape[1:], dtype=np.float64))
+        current += gate.sum(axis=0)
+        window_counts[method] = window_counts.get(method, 0) + int(gate.shape[0])
+
+
+def finalize_gate_summaries(
+    step_sums: dict[str, np.ndarray],
+    window_counts: dict[str, int],
+    dt_seconds: float | None,
+) -> dict[str, dict]:
+    gate_metrics: dict[str, dict] = {}
+    for method, summed in step_sums.items():
+        windows = max(window_counts.get(method, 0), 1)
+        by_step = summed / windows
+        axis_mean = by_step.mean(axis=0)
+        step_rows = []
+        for index, values in enumerate(by_step):
+            row = {
+                "forecast_step": int(index + 1),
+                "X": float(values[0]),
+                "Y": float(values[1]),
+                "Z": float(values[2]),
+            }
+            if dt_seconds is not None:
+                row["lead_time_s"] = float(index * dt_seconds)
+            step_rows.append(row)
+        gate_metrics[method] = {
+            "windows": int(window_counts.get(method, 0)),
+            "axis_mean": {
+                "X": float(axis_mean[0]),
+                "Y": float(axis_mean[1]),
+                "Z": float(axis_mean[2]),
+            },
+            "forecast_step_mean_gate": step_rows,
+            "interpretation": (
+                "For persistence-gated models, 0 means full last-acceleration persistence "
+                "and 1 means full learned branch."
+            ),
+        }
+    return gate_metrics
 
 
 def retain_worst(
@@ -936,6 +1079,9 @@ def evaluate(
     illustrative: dict[float, PlotWindow] = {}
     total_windows = 0
     dt_medians: list[float] = []
+    inference_timing_totals: dict[str, dict[str, float | int]] = {}
+    gate_step_sums: dict[str, np.ndarray] = {}
+    gate_window_counts: dict[str, int] = {}
     start_time = time.time()
     for sequence, path in enumerate(files, 1):
         try:
@@ -959,7 +1105,7 @@ def evaluate(
             calculate_x_b, future_times, parameters, thrust_curve, rate, condition_context
         )
         last_observed_acceleration = targets[starts - 1]
-        model_accelerations = predict_model_accelerations(
+        model_predictions = predict_model_accelerations(
             model_specs,
             models,
             input_windows,
@@ -976,6 +1122,9 @@ def evaluate(
             args.amp,
             last_observed_acceleration,
         )
+        model_accelerations = model_predictions.accelerations
+        merge_inference_timings(inference_timing_totals, model_predictions.timings)
+        merge_gate_summaries(gate_step_sums, gate_window_counts, model_predictions.gates)
         last_acc = np.repeat(last_observed_acceleration[:, None, :], args.pred_len, axis=1)
         for method, prediction in model_accelerations.items():
             acceleration[method].add(prediction, actual_acc)
@@ -1064,6 +1213,7 @@ def evaluate(
             )
     if not rows:
         raise RuntimeError("No readable external test flights produced evaluation windows.")
+    dt_seconds_median = float(np.median(dt_medians)) if dt_medians else None
     summary = {
         "models": [
             {"name": spec.name, "path": str(spec.path), "output_mode": spec.output_mode}
@@ -1083,12 +1233,12 @@ def evaluate(
         "seq_len": args.seq_len,
         "pred_len": args.pred_len,
         "downsample": args.downsample,
-        "dt_seconds_median": float(np.median(dt_medians)) if dt_medians else None,
-        "history_window_seconds_median": float(max(args.seq_len - 1, 0) * np.median(dt_medians))
-        if dt_medians
+        "dt_seconds_median": dt_seconds_median,
+        "history_window_seconds_median": float(max(args.seq_len - 1, 0) * dt_seconds_median)
+        if dt_seconds_median is not None
         else None,
-        "prediction_horizon_seconds_median": float(max(args.pred_len - 1, 0) * np.median(dt_medians))
-        if dt_medians
+        "prediction_horizon_seconds_median": float(max(args.pred_len - 1, 0) * dt_seconds_median)
+        if dt_seconds_median is not None
         else None,
         "input_columns": INPUT_COLUMNS,
         "condition_columns": CONDITION_COLUMNS,
@@ -1105,6 +1255,12 @@ def evaluate(
         "acceleration_metrics": {
             method: acceleration[method].summarize() for method in acceleration
         },
+        "inference_timing": finalize_inference_timings(inference_timing_totals),
+        "gate_metrics": finalize_gate_summaries(
+            gate_step_sums,
+            gate_window_counts,
+            dt_seconds_median,
+        ),
     }
     return summary, rows, sorted(worst, reverse=True), [illustrative[target] for target in illustrative_targets]
 
@@ -1217,7 +1373,7 @@ def evaluate_landing_horizons(
         base = baseline_acceleration(
             calculate_x_b, time_array, parameters, thrust_curve, rate, condition_context_array
         )
-        model_accelerations = predict_model_accelerations(
+        model_predictions = predict_model_accelerations(
             model_specs,
             models,
             histories_array,
@@ -1234,6 +1390,7 @@ def evaluate_landing_horizons(
             args.amp,
             np.stack(previous_accelerations),
         )
+        model_accelerations = model_predictions.accelerations
         last_acc = np.repeat(np.stack(previous_accelerations)[:, None, :], horizon, axis=1)
         acceleration_predictions = {
             **model_accelerations,
@@ -1347,6 +1504,34 @@ def write_outputs(
             writer = csv.DictWriter(handle, fieldnames=list(landing_rows[0].keys()))
             writer.writeheader()
             writer.writerows(landing_rows)
+    if summary.get("inference_timing"):
+        with (args.output_dir / "inference_timing.csv").open("w", newline="", encoding="utf-8") as handle:
+            fieldnames = [
+                "method",
+                "seq_len",
+                "pred_len",
+                "windows",
+                "batches",
+                "total_inference_seconds",
+                "mean_seconds_per_window",
+                "mean_milliseconds_per_window",
+                "throughput_windows_per_second",
+            ]
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for method, item in summary["inference_timing"].items():
+                writer.writerow({"method": method, **{key: item.get(key) for key in fieldnames[1:]}})
+    gate_rows = []
+    for method, item in summary.get("gate_metrics", {}).items():
+        for step in item.get("forecast_step_mean_gate", []):
+            gate_rows.append({"method": method, **step})
+    if gate_rows:
+        with (args.output_dir / "gate_behavior_by_forecast_step.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(gate_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(gate_rows)
     lines = [
         "EXHAUSTIVE EXTERNAL TEST SUMMARY - XYZ POSITION AND ACCELERATION",
         "Models:",
@@ -1405,6 +1590,22 @@ def write_outputs(
             f"Y_RMSE={item['y_rmse']:.4f}  Z_RMSE={item['z_rmse']:.4f}  "
             f"vector_RMSE={item['vector_rmse']:.4f}"
         )
+    if summary.get("inference_timing"):
+        lines.append("")
+        lines.append("MODEL INFERENCE TIME")
+        for method, item in summary["inference_timing"].items():
+            lines.append(
+                f"{method:30s} mean={item['mean_milliseconds_per_window']:.4f} ms/window  "
+                f"throughput={item['throughput_windows_per_second']:.1f} windows/s"
+            )
+    if summary.get("gate_metrics"):
+        lines.append("")
+        lines.append("PERSISTENCE GATE MEAN - 0=PERSISTENCE, 1=LEARNED BRANCH")
+        for method, item in summary["gate_metrics"].items():
+            axis = item["axis_mean"]
+            lines.append(
+                f"{method:30s} X={axis['X']:.3f}  Y={axis['Y']:.3f}  Z={axis['Z']:.3f}"
+            )
     if summary.get("landing_horizon_metrics"):
         lines.append("")
         lines.append("FINAL DIFFERENCE IN LANDING - ENDPOINT 3D DISTANCE")
@@ -1452,31 +1653,43 @@ def render_plots(
     position = summary["position_metrics"]
     metric_3d = {method: position[method]["3D"] for method in comparison}
     fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+    bar_positions = np.arange(len(comparison))
     axes[0].bar(
-        comparison,
+        bar_positions,
         [metric_3d[m]["point_rmse_m"] for m in comparison],
         color=[COLORS[m] for m in comparison],
     )
     axes[0].set_ylabel("Point RMSE (m)")
-    axes[0].set_xticks(range(len(comparison)), wrapped_labels(comparison))
-    axes[0].tick_params(axis="x", rotation=0)
+    axes[0].set_xticks(bar_positions)
+    axes[0].set_xticklabels([])
+    axes[0].tick_params(axis="x", length=0)
     axes[0].grid(axis="y", alpha=0.3)
     failure_rates = [metric_3d[m]["failure_rate_pct"] for m in comparison]
     nonzero_rates = [rate for rate in failure_rates if rate > 0]
     display_floor = min(nonzero_rates) / 10 if nonzero_rates else 1e-6
     axes[1].bar(
-        comparison,
+        bar_positions,
         [max(rate, display_floor) for rate in failure_rates],
         color=[COLORS[m] for m in comparison],
     )
     axes[1].set_yscale("log")
     axes[1].set_ylabel(f"Windows with RMSE > {args.threshold:g} m (%) - log scale")
-    axes[1].set_xticks(range(len(comparison)), wrapped_labels(comparison))
-    axes[1].tick_params(axis="x", rotation=0)
+    axes[1].set_xticks(bar_positions)
+    axes[1].set_xticklabels([])
+    axes[1].tick_params(axis="x", length=0)
     axes[1].grid(axis="y", alpha=0.3)
     for index, rate in enumerate(failure_rates):
         axes[1].text(index, max(rate, display_floor), f"{rate:.4g}%", ha="center", va="bottom")
-    fig.tight_layout(pad=1.6, w_pad=2.0)
+    legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in comparison]
+    fig.legend(
+        legend_handles,
+        comparison,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.99),
+        ncol=legend_columns(len(comparison)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "baseline_comparison.png", dpi=180)
     plt.close(fig)
 
@@ -1512,10 +1725,10 @@ def render_plots(
         labels,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.99),
-        ncol=min(4, max(1, len(labels))),
-        frameon=False,
+        ncol=legend_columns(len(labels)),
+        **LEGEND_STYLE,
     )
-    fig.tight_layout(rect=(0, 0, 1, 0.86), pad=1.6, w_pad=2.0)
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "position_axis_comparison.png", dpi=180)
     plt.close(fig)
 
@@ -1543,14 +1756,100 @@ def render_plots(
     ax.legend(
         loc="upper center",
         bbox_to_anchor=(0.5, 1.15),
-        ncol=min(4, max(1, len(acc_methods))),
-        frameon=False,
+        ncol=legend_columns(len(acc_methods)),
+        **LEGEND_STYLE,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.90), pad=1.6)
     fig.savefig(args.output_dir / "acceleration_axis_comparison.png", dpi=180)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(11, 6))
+    timing = summary.get("inference_timing", {})
+    timing_methods = [method for method in summary["neural_methods"] if method in timing]
+    if timing_methods:
+        fig, ax = plt.subplots(figsize=(13, 6))
+        bar_positions = np.arange(len(timing_methods))
+        ax.bar(
+            bar_positions,
+            [timing[method]["mean_milliseconds_per_window"] for method in timing_methods],
+            color=[COLORS[method] for method in timing_methods],
+        )
+        ax.set_ylabel("Mean inference time per window (ms)")
+        ax.set_xticks(bar_positions)
+        ax.set_xticklabels([])
+        ax.tick_params(axis="x", length=0)
+        ax.grid(axis="y", alpha=0.3)
+        for index, method in enumerate(timing_methods):
+            value = timing[method]["mean_milliseconds_per_window"]
+            ax.text(index, value, f"{value:.3f}", ha="center", va="bottom")
+        legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in timing_methods]
+        fig.legend(
+            legend_handles,
+            timing_methods,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=legend_columns(len(timing_methods)),
+            **LEGEND_STYLE,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6)
+        fig.savefig(args.output_dir / "inference_time_by_model.png", dpi=180)
+        plt.close(fig)
+
+    gate_metrics = summary.get("gate_metrics", {})
+    if gate_metrics:
+        gate_methods = list(gate_metrics.keys())
+        fig, axes = plt.subplots(
+            len(gate_methods),
+            1,
+            figsize=(14, 4.8 * len(gate_methods)),
+            sharex=True,
+            squeeze=False,
+        )
+        axis_colors = {"X": "#4c78a8", "Y": "#f58518", "Z": "#54a24b"}
+        for row_index, method in enumerate(gate_methods):
+            axis = axes[row_index, 0]
+            steps = gate_metrics[method]["forecast_step_mean_gate"]
+            x_values = [
+                step.get("lead_time_s", step["forecast_step"])
+                for step in steps
+            ]
+            for axis_name in ["X", "Y", "Z"]:
+                axis.plot(
+                    x_values,
+                    [step[axis_name] for step in steps],
+                    color=axis_colors[axis_name],
+                    linewidth=2,
+                    label=axis_name,
+                )
+            axis.set_ylim(-0.02, 1.02)
+            axis.set_ylabel("Mean gate")
+            axis.grid(alpha=0.3)
+            axis.text(
+                0.02,
+                0.95,
+                method,
+                transform=axis.transAxes,
+                ha="left",
+                va="top",
+                fontsize=12,
+                bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+            )
+        axes[-1, 0].set_xlabel(
+            "Forecast lead time (s)" if "lead_time_s" in gate_metrics[gate_methods[0]]["forecast_step_mean_gate"][0] else "Forecast step"
+        )
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.995),
+            ncol=legend_columns(len(labels)),
+            **LEGEND_STYLE,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, h_pad=2.0)
+        fig.savefig(args.output_dir / "gate_behavior_by_forecast_step.png", dpi=180)
+        plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(16, 11))
     for method in comparison:
         key = method_key(method)
         values = np.array([float(row[f"{key}_3d_mean_window_rmse_m"]) for row in rows])
@@ -1561,8 +1860,13 @@ def render_plots(
     ax.set_xlabel(f"Per-flight mean {forecast_label} 3D distance RMSE (m) - log scale")
     ax.set_ylabel("Fraction of flights")
     ax.grid(alpha=0.3)
-    ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5), frameon=False)
-    fig.tight_layout(rect=(0, 0, 0.78, 1), pad=1.6)
+    ax.legend(
+        loc="upper center",
+        bbox_to_anchor=(0.5, 1.27),
+        ncol=legend_columns(len(comparison)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6)
     fig.savefig(args.output_dir / "per_flight_error_cdf.png", dpi=180)
     plt.close(fig)
 
@@ -1616,8 +1920,8 @@ def render_plots(
         labels,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.995),
-        ncol=min(5, max(1, len(labels))),
-        frameon=False,
+        ncol=legend_columns(len(labels)),
+        **LEGEND_STYLE,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93), pad=1.6, h_pad=2.0, w_pad=1.8)
     fig.savefig(args.output_dir / "worst_gru_trajectories.png", dpi=180)
@@ -1661,8 +1965,8 @@ def render_plots(
         labels,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.995),
-        ncol=min(5, max(1, len(labels))),
-        frameon=False,
+        ncol=legend_columns(len(labels)),
+        **LEGEND_STYLE,
     )
     fig.tight_layout(rect=(0, 0, 1, 0.93), pad=1.6, h_pad=2.0, w_pad=1.8)
     fig.savefig(args.output_dir / "illustrative_gru_trajectories.png", dpi=180)
@@ -1702,8 +2006,8 @@ def render_plots(
             labels,
             loc="upper center",
             bbox_to_anchor=(0.5, 0.99),
-            ncol=min(4, max(1, len(labels))),
-            frameon=False,
+            ncol=legend_columns(len(labels)),
+            **LEGEND_STYLE,
         )
         fig.tight_layout(rect=(0, 0, 1, 0.86), pad=1.6, w_pad=2.0)
         fig.savefig(args.output_dir / "landing_error_by_horizon.png", dpi=180)
@@ -1736,7 +2040,12 @@ def render_plots(
         ax.set_ylabel("Landing Y (m)")
         ax.axis("equal")
         ax.grid(alpha=0.3)
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, 1.10), ncol=2, frameon=False)
+        ax.legend(
+            loc="upper center",
+            bbox_to_anchor=(0.5, 1.10),
+            ncol=legend_columns(2),
+            **LEGEND_STYLE,
+        )
         fig.tight_layout(rect=(0, 0, 1, 0.94), pad=1.6)
         fig.savefig(args.output_dir / "landing_spots_longest_horizon.png", dpi=180)
         plt.close(fig)

@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+from matplotlib.patches import Patch
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -34,10 +35,12 @@ if str(SCRIPT_DIR) not in sys.path:
 from evaluate_gru import (  # noqa: E402 # type: ignore
     CONDITION_COLUMNS,
     INPUT_COLUMNS,
+    LEGEND_STYLE,
     SENSOR_COLUMNS,
     baseline_acceleration,
     compute_scalers,
     configure_imports,
+    legend_columns,
     load_network,
     predict_normalized,
 )
@@ -789,41 +792,64 @@ def render_plots(
     comparison = ["GRU + RK4", "Polynomial", "RK4 only", "Last acceleration"]
 
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
+    bar_positions = np.arange(len(comparison))
     axes[0].bar(
-        comparison,
+        bar_positions,
         [position[method]["point_rmse"] for method in comparison],
         color=[COLORS[method] for method in comparison],
     )
-    axes[0].set_title("Real Flight Z Position RMSE")
     axes[0].set_ylabel("Point RMSE (m)")
-    axes[0].tick_params(axis="x", rotation=20)
+    axes[0].set_xticks(bar_positions)
+    axes[0].set_xticklabels([])
+    axes[0].tick_params(axis="x", length=0)
     axes[0].grid(axis="y", alpha=0.3)
 
     axes[1].bar(
-        comparison,
+        bar_positions,
         [position[method]["failure_rate_pct"] for method in comparison],
         color=[COLORS[method] for method in comparison],
     )
-    axes[1].set_title("Z Position Threshold Failure Rate")
     axes[1].set_ylabel(f"Windows > {args.position_threshold:g} m (%)")
-    axes[1].tick_params(axis="x", rotation=20)
+    axes[1].set_xticks(bar_positions)
+    axes[1].set_xticklabels([])
+    axes[1].tick_params(axis="x", length=0)
     axes[1].grid(axis="y", alpha=0.3)
-    fig.tight_layout()
+    legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in comparison]
+    fig.legend(
+        legend_handles,
+        comparison,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.99),
+        ncol=legend_columns(len(comparison)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "z_position_baseline_comparison.png", dpi=180)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(8, 5))
     acc_methods = ACC_METHODS
+    bar_positions = np.arange(len(acc_methods))
     ax.bar(
-        acc_methods,
+        bar_positions,
         [acceleration[method]["point_rmse"] for method in acc_methods],
         color=[COLORS[method] for method in acc_methods],
     )
-    ax.set_title("Real Flight Z Acceleration RMSE")
     ax.set_ylabel("Point RMSE")
-    ax.tick_params(axis="x", rotation=20)
+    ax.set_xticks(bar_positions)
+    ax.set_xticklabels([])
+    ax.tick_params(axis="x", length=0)
     ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout()
+    legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in acc_methods]
+    fig.legend(
+        legend_handles,
+        acc_methods,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.99),
+        ncol=legend_columns(len(acc_methods)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6)
     fig.savefig(args.output_dir / "z_acceleration_baseline_comparison.png", dpi=180)
     plt.close(fig)
 
@@ -845,14 +871,20 @@ def render_plots(
             color=COLORS[method],
             label=method,
         )
-    axes[0].set_title("Mean Z Position Window RMSE by Horizon")
-    axes[1].set_title("P95 Z Position Window RMSE by Horizon")
     for axis in axes:
         axis.set_xlabel("Forecast lead time (s)")
         axis.set_ylabel("RMSE (m)")
         axis.grid(alpha=0.3)
-        axis.legend()
-    fig.tight_layout()
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.99),
+        ncol=legend_columns(len(labels)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "z_error_by_horizon.png", dpi=180)
     plt.close(fig)
 
@@ -874,9 +906,7 @@ def render_plots(
         )
         axes[0].axhline(args.position_threshold, color="black", linestyle="--", linewidth=1)
         axes[0].set_ylabel("Z position RMSE (m)")
-        axes[0].set_title("Window Error Over Real Flight")
         axes[0].grid(alpha=0.3)
-        axes[0].legend()
 
         axes[1].plot(
             data["start_time_s"],
@@ -895,8 +925,16 @@ def render_plots(
         axes[1].set_xlabel("Prediction start time (s)")
         axes[1].set_ylabel("Z acceleration RMSE")
         axes[1].grid(alpha=0.3)
-        axes[1].legend()
-        fig.tight_layout()
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.995),
+            ncol=legend_columns(len(labels)),
+            **LEGEND_STYLE,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, h_pad=2.0)
         fig.savefig(args.output_dir / "z_window_error_timeline.png", dpi=180)
         plt.close(fig)
 
@@ -926,16 +964,31 @@ def render_window_examples(args: argparse.Namespace, windows: list[PlotWindow], 
                 linewidth=1.5,
                 label=method,
             )
-        axis.set_title(f"t0={item.start_time:.2f}s, GRU RMSE={item.score:.2f}m")
+        axis.text(
+            0.02,
+            0.98,
+            f"t0={item.start_time:.2f}s\nGRU RMSE={item.score:.2f} m",
+            transform=axis.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+        )
         axis.set_xlabel("Horizon time (s)")
         axis.set_ylabel("Z position / altitude (m)")
         axis.grid(alpha=0.3)
     for axis in axes.flat[count:]:
         axis.axis("off")
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=5)
-    fig.suptitle(title, y=0.995)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=legend_columns(len(labels)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.90], pad=1.6, h_pad=2.0)
     fig.savefig(args.output_dir / filename, dpi=180)
     plt.close(fig)
 
@@ -965,16 +1018,31 @@ def render_acceleration_examples(
                 linewidth=1.5,
                 label=method,
             )
-        axis.set_title(f"t0={item.start_time:.2f}s")
+        axis.text(
+            0.02,
+            0.98,
+            f"t0={item.start_time:.2f}s",
+            transform=axis.transAxes,
+            ha="left",
+            va="top",
+            fontsize=9,
+            bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+        )
         axis.set_xlabel("Horizon time (s)")
         axis.set_ylabel("Z acceleration")
         axis.grid(alpha=0.3)
     for axis in axes.flat[count:]:
         axis.axis("off")
     handles, labels = axes.flat[0].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=4)
-    fig.suptitle(title, y=0.995)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.995),
+        ncol=legend_columns(len(labels)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.90], pad=1.6, h_pad=2.0)
     fig.savefig(args.output_dir / filename, dpi=180)
     plt.close(fig)
 

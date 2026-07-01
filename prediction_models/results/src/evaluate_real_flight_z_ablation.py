@@ -62,7 +62,11 @@ from evaluate_gru import (  # noqa: E402  # type: ignore
     baseline_acceleration,
     configure_imports,
     integrate_position,
+    finalize_inference_timings,
+    finalize_gate_summaries,
     load_networks,
+    merge_gate_summaries,
+    merge_inference_timings,
     polynomial_prediction,
     predict_model_accelerations,
 )
@@ -109,6 +113,19 @@ COLORS = {
     "Last acceleration": "#ff7f0e",
     "Oracle acceleration": "#2ca02c",
 }
+
+LEGEND_STYLE = {
+    "frameon": False,
+    "fontsize": 12,
+    "handlelength": 1.8,
+    "handleheight": 1.1,
+    "columnspacing": 1.6,
+    "labelspacing": 0.8,
+}
+
+
+def legend_columns(item_count: int, max_columns: int = 4) -> int:
+    return min(max_columns, max(1, item_count))
 
 
 @dataclass
@@ -220,6 +237,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--gru-res-phys-gate-smooth-model", type=Path, default=None)
     parser.add_argument("--last-acc-gru-model", type=Path, default=None)
     parser.add_argument("--scaler-npz", type=Path, default=None)
+    parser.add_argument(
+        "--synthetic-summary",
+        type=Path,
+        default=None,
+        help=(
+            "Optional synthetic evaluation summary.json for the synthetic-vs-real transfer plot. "
+            "If omitted, the evaluator looks next to --scaler-npz."
+        ),
+    )
     parser.add_argument("--gnss-trajectory", type=Path, default=None)
     parser.add_argument("--parameters", type=Path, default=None)
     parser.add_argument("--thrust-curve", type=Path, default=None)
@@ -303,6 +329,11 @@ def resolve_paths(args: argparse.Namespace) -> None:
         args.scaler_npz = Path.home() / "gru_ablation_eval_generalized" / "reconstructed_scalers.npz"
     else:
         args.scaler_npz = args.scaler_npz.expanduser().resolve()
+    if args.synthetic_summary is not None:
+        args.synthetic_summary = args.synthetic_summary.expanduser().resolve()
+    else:
+        candidate_summary = args.scaler_npz.parent / "summary.json"
+        args.synthetic_summary = candidate_summary if candidate_summary.exists() else None
     model_source_root = args.repo / "source_data" / "R7_SIMLE"
     if args.parameters is None:
         args.parameters = model_source_root / "R7_ROBUSTNESS" / "parameters.json"
@@ -1048,7 +1079,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         sampling_rate,
         windows["condition_context"],
     )
-    model_acc_3d = predict_model_accelerations(
+    model_predictions = predict_model_accelerations(
         model_specs,
         models,
         windows["input_windows"],
@@ -1065,6 +1096,13 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         args.amp,
         windows["previous_accelerations"],
     )
+    model_acc_3d = model_predictions.accelerations
+    inference_timing_totals: dict[str, dict[str, float | int]] = {}
+    merge_inference_timings(inference_timing_totals, model_predictions.timings)
+    gate_step_sums: dict[str, np.ndarray] = {}
+    gate_window_counts: dict[str, int] = {}
+    merge_gate_summaries(gate_step_sums, gate_window_counts, model_predictions.gates)
+    gate_by_method = model_predictions.gates
 
     acceleration_predictions: dict[str, np.ndarray] = {
         spec.name: model_acc_3d[spec.name][:, :, 2] for spec in model_specs
@@ -1209,7 +1247,36 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         for method in acceleration_methods:
             key = method_key(method)
             row[f"{key}_acceleration_z_window_rmse"] = float(acc_rmse_by_method[method][index])
+        for method, gate in gate_by_method.items():
+            key = method_key(method)
+            gate_mean = gate[index].mean(axis=0)
+            row[f"{key}_gate_x_mean"] = float(gate_mean[0])
+            row[f"{key}_gate_y_mean"] = float(gate_mean[1])
+            row[f"{key}_gate_z_mean"] = float(gate_mean[2])
         rows.append(row)
+
+    inference_timing = finalize_inference_timings(inference_timing_totals)
+    history_wait_seconds = float(max(args.seq_len - 1, 0) * np.median(dt))
+    prediction_arrival_timing = {}
+    for method, item in inference_timing.items():
+        inference_seconds = float(item["mean_seconds_per_window"])
+        prediction_arrival_timing[method] = {
+            "seq_len": args.seq_len,
+            "pred_len": args.pred_len,
+            "history_wait_seconds": history_wait_seconds,
+            "mean_inference_seconds_per_window": inference_seconds,
+            "mean_inference_milliseconds_per_window": float(
+                item["mean_milliseconds_per_window"]
+            ),
+            "first_prediction_available_seconds_after_start": float(
+                history_wait_seconds + inference_seconds
+            ),
+            "prediction_horizon_seconds_median": float(np.median(lead_seconds)),
+            "interpretation": (
+                "The first forecast can be produced after the history window is available, "
+                "plus one mean model inference time."
+            ),
+        }
 
     summary = {
         "flight": str(args.flight),
@@ -1223,6 +1290,7 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         "parameters": str(args.parameters),
         "thrust_curve": str(args.thrust_curve),
         "scaler_npz": str(args.scaler_npz),
+        "synthetic_summary": str(args.synthetic_summary) if args.synthetic_summary else None,
         "gnss_trajectory": str(args.gnss_trajectory) if args.gnss_trajectory else None,
         "coarse_gnss_reference": gnss_reference_metadata,
         "output_dir": str(args.output_dir),
@@ -1274,6 +1342,13 @@ def evaluate(args: argparse.Namespace) -> tuple[dict, list[dict], list[dict]]:
         }
         if gnss_reference_positions is not None
         else {},
+        "inference_timing": inference_timing,
+        "prediction_arrival_timing": prediction_arrival_timing,
+        "gate_metrics": finalize_gate_summaries(
+            gate_step_sums,
+            gate_window_counts,
+            float(np.median(dt)),
+        ),
         "validation_scope": {
             "validated": [
                 "real telemetry ingestion",
@@ -1318,6 +1393,34 @@ def write_outputs(
             writer = csv.DictWriter(handle, fieldnames=list(envelope_rows[0].keys()))
             writer.writeheader()
             writer.writerows(envelope_rows)
+    if summary.get("inference_timing"):
+        with (args.output_dir / "inference_timing.csv").open("w", newline="", encoding="utf-8") as handle:
+            fieldnames = [
+                "method",
+                "seq_len",
+                "pred_len",
+                "windows",
+                "batches",
+                "total_inference_seconds",
+                "mean_seconds_per_window",
+                "mean_milliseconds_per_window",
+                "throughput_windows_per_second",
+            ]
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for method, item in summary["inference_timing"].items():
+                writer.writerow({"method": method, **{key: item.get(key) for key in fieldnames[1:]}})
+    gate_rows = []
+    for method, item in summary.get("gate_metrics", {}).items():
+        for step in item.get("forecast_step_mean_gate", []):
+            gate_rows.append({"method": method, **step})
+    if gate_rows:
+        with (args.output_dir / "gate_behavior_by_forecast_step.csv").open(
+            "w", newline="", encoding="utf-8"
+        ) as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(gate_rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(gate_rows)
 
     has_coarse_gnss = bool(summary.get("coarse_gnss_3d_metrics"))
     title = (
@@ -1344,6 +1447,8 @@ def write_outputs(
         f"Position threshold: >{summary['position_threshold_m']:.1f} m window RMSE",
         f"Acceleration threshold: >{summary['acc_threshold']:.1f} window RMSE",
     ]
+    if summary.get("synthetic_summary"):
+        lines.append(f"Synthetic comparison summary: {summary['synthetic_summary']}")
     if summary.get("ukf_baseline"):
         ukf = summary["ukf_baseline"]
         lines.extend(
@@ -1404,6 +1509,22 @@ def write_outputs(
             f">threshold={item['failures_over_threshold']:,}/{item['windows']:,} "
             f"({item['failure_rate_pct']:.3f}%)"
         )
+    if summary.get("inference_timing"):
+        lines.extend(["", "MODEL INFERENCE AND FIRST REAL-FLIGHT FORECAST ARRIVAL"])
+        for method, item in summary["inference_timing"].items():
+            arrival = summary["prediction_arrival_timing"][method]
+            lines.append(
+                f"{method:30s} mean={item['mean_milliseconds_per_window']:.4f} ms/window  "
+                f"first_available≈{arrival['first_prediction_available_seconds_after_start']:.3f}s "
+                f"after flight start"
+            )
+    if summary.get("gate_metrics"):
+        lines.extend(["", "PERSISTENCE GATE MEAN - 0=PERSISTENCE, 1=LEARNED BRANCH"])
+        for method, item in summary["gate_metrics"].items():
+            axis = item["axis_mean"]
+            lines.append(
+                f"{method:30s} X={axis['X']:.3f}  Y={axis['Y']:.3f}  Z={axis['Z']:.3f}"
+            )
     lines.extend(
         [
             "",
@@ -1431,6 +1552,7 @@ def render_plots(
 
     matplotlib.use("Agg")
     from matplotlib import pyplot as plt
+    from matplotlib.patches import Patch
 
     position = summary["position_z_metrics"]
     acceleration = summary["acceleration_z_metrics"]
@@ -1442,45 +1564,208 @@ def render_plots(
     ]
 
     fig, axes = plt.subplots(1, 2, figsize=(17, 6))
+    bar_positions = np.arange(len(comparison))
     axes[0].bar(
-        comparison,
+        bar_positions,
         [position[method]["mean_window_rmse"] for method in comparison],
         color=[COLORS[method] for method in comparison],
     )
     axes[0].set_ylabel("Mean window RMSE (m)")
-    axes[0].set_xticks(range(len(comparison)), wrapped_labels(comparison))
-    axes[0].tick_params(axis="x", rotation=0)
+    axes[0].set_xticks(bar_positions)
+    axes[0].set_xticklabels([])
+    axes[0].tick_params(axis="x", length=0)
     axes[0].grid(axis="y", alpha=0.3)
 
     axes[1].bar(
-        comparison,
+        bar_positions,
         [position[method]["failure_rate_pct"] for method in comparison],
         color=[COLORS[method] for method in comparison],
     )
     axes[1].set_ylabel(f"Windows > {args.position_threshold:g} m (%)")
-    axes[1].set_xticks(range(len(comparison)), wrapped_labels(comparison))
-    axes[1].tick_params(axis="x", rotation=0)
+    axes[1].set_xticks(bar_positions)
+    axes[1].set_xticklabels([])
+    axes[1].tick_params(axis="x", length=0)
     axes[1].grid(axis="y", alpha=0.3)
-    fig.tight_layout(pad=1.6, w_pad=2.0)
+    legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in comparison]
+    fig.legend(
+        legend_handles,
+        comparison,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.99),
+        ncol=legend_columns(len(comparison)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6, w_pad=2.0)
     fig.savefig(args.output_dir / "z_position_ablation_comparison.png", dpi=180)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(13, 6))
+    acceleration_methods = summary["acceleration_methods"]
+    bar_positions = np.arange(len(acceleration_methods))
     ax.bar(
-        summary["acceleration_methods"],
-        [acceleration[method]["mean_window_rmse"] for method in summary["acceleration_methods"]],
-        color=[COLORS[method] for method in summary["acceleration_methods"]],
+        bar_positions,
+        [acceleration[method]["mean_window_rmse"] for method in acceleration_methods],
+        color=[COLORS[method] for method in acceleration_methods],
     )
     ax.set_ylabel("Mean window RMSE")
-    ax.set_xticks(
-        range(len(summary["acceleration_methods"])),
-        wrapped_labels(summary["acceleration_methods"]),
-    )
-    ax.tick_params(axis="x", rotation=0)
+    ax.set_xticks(bar_positions)
+    ax.set_xticklabels([])
+    ax.tick_params(axis="x", length=0)
     ax.grid(axis="y", alpha=0.3)
-    fig.tight_layout(pad=1.6)
+    legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in acceleration_methods]
+    fig.legend(
+        legend_handles,
+        acceleration_methods,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.99),
+        ncol=legend_columns(len(acceleration_methods)),
+        **LEGEND_STYLE,
+    )
+    fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6)
     fig.savefig(args.output_dir / "z_acceleration_ablation_comparison.png", dpi=180)
     plt.close(fig)
+
+    timing = summary.get("inference_timing", {})
+    arrival = summary.get("prediction_arrival_timing", {})
+    timing_methods = [item["name"] for item in summary["models"] if item["name"] in timing]
+    if timing_methods:
+        fig, axes = plt.subplots(1, 2, figsize=(17, 6))
+        bar_positions = np.arange(len(timing_methods))
+        axes[0].bar(
+            bar_positions,
+            [arrival[method]["first_prediction_available_seconds_after_start"] for method in timing_methods],
+            color=[COLORS[method] for method in timing_methods],
+        )
+        axes[0].set_ylabel("First forecast available after flight start (s)")
+        axes[0].set_xticks(bar_positions)
+        axes[0].set_xticklabels([])
+        axes[0].tick_params(axis="x", length=0)
+        axes[0].grid(axis="y", alpha=0.3)
+
+        axes[1].bar(
+            bar_positions,
+            [timing[method]["mean_milliseconds_per_window"] for method in timing_methods],
+            color=[COLORS[method] for method in timing_methods],
+        )
+        axes[1].set_ylabel("Mean inference time per window (ms)")
+        axes[1].set_xticks(bar_positions)
+        axes[1].set_xticklabels([])
+        axes[1].tick_params(axis="x", length=0)
+        axes[1].grid(axis="y", alpha=0.3)
+        for index, method in enumerate(timing_methods):
+            value = timing[method]["mean_milliseconds_per_window"]
+            axes[1].text(index, value, f"{value:.3f}", ha="center", va="bottom")
+        legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in timing_methods]
+        fig.legend(
+            legend_handles,
+            timing_methods,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=legend_columns(len(timing_methods)),
+            **LEGEND_STYLE,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6, w_pad=2.0)
+        fig.savefig(args.output_dir / "real_prediction_arrival_timing.png", dpi=180)
+        plt.close(fig)
+
+    if rows and summary.get("gate_metrics"):
+        data = pd.DataFrame(rows)
+        gate_methods = list(summary["gate_metrics"].keys())
+        fig, axes = plt.subplots(
+            len(gate_methods),
+            1,
+            figsize=(16, 4.8 * len(gate_methods)),
+            sharex=True,
+            squeeze=False,
+        )
+        axis_colors = {"X": "#4c78a8", "Y": "#f58518", "Z": "#54a24b"}
+        for row_index, method in enumerate(gate_methods):
+            axis = axes[row_index, 0]
+            key = method_key(method)
+            for axis_name in ["X", "Y", "Z"]:
+                column = f"{key}_gate_{axis_name.lower()}_mean"
+                if column not in data:
+                    continue
+                axis.plot(
+                    data["start_time_s"],
+                    data[column],
+                    color=axis_colors[axis_name],
+                    linewidth=1.8,
+                    label=axis_name,
+                )
+            axis.set_ylim(-0.02, 1.02)
+            axis.set_ylabel("Mean gate")
+            axis.grid(alpha=0.3)
+            axis.text(
+                0.02,
+                0.95,
+                method,
+                transform=axis.transAxes,
+                ha="left",
+                va="top",
+                fontsize=12,
+                bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
+            )
+        axes[-1, 0].set_xlabel("Prediction start time (s)")
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(
+            handles,
+            labels,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.995),
+            ncol=legend_columns(len(labels)),
+            **LEGEND_STYLE,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, h_pad=2.0)
+        fig.savefig(args.output_dir / "gate_behavior_over_real_flight.png", dpi=180)
+        plt.close(fig)
+
+    synthetic_summary_path = summary.get("synthetic_summary")
+    if synthetic_summary_path and Path(synthetic_summary_path).exists():
+        with Path(synthetic_summary_path).open("r", encoding="utf-8") as handle:
+            synthetic = json.load(handle)
+        synthetic_position = synthetic.get("position_metrics", {})
+        transfer_methods = [
+            method
+            for method in comparison
+            if method in synthetic_position and "3D" in synthetic_position[method]
+        ]
+        if transfer_methods:
+            y = np.arange(len(transfer_methods))
+            height = 0.38
+            fig, axes = plt.subplots(1, 2, figsize=(17, 7), sharey=True)
+            synth_rmse = [
+                synthetic_position[method]["3D"]["mean_window_rmse_m"]
+                for method in transfer_methods
+            ]
+            real_rmse = [position[method]["mean_window_rmse"] for method in transfer_methods]
+            axes[0].barh(y - height / 2, synth_rmse, height, color="#4c78a8", label="Synthetic 3D")
+            axes[0].barh(y + height / 2, real_rmse, height, color="#f58518", label="Real Z")
+            axes[0].set_xlabel("Mean window RMSE (m)")
+            axes[0].set_yticks(y, [wrapped_label(method, width=24) for method in transfer_methods])
+            axes[0].grid(axis="x", alpha=0.3)
+
+            synth_fail = [
+                synthetic_position[method]["3D"]["failure_rate_pct"]
+                for method in transfer_methods
+            ]
+            real_fail = [position[method]["failure_rate_pct"] for method in transfer_methods]
+            axes[1].barh(y - height / 2, synth_fail, height, color="#4c78a8", label="Synthetic 3D")
+            axes[1].barh(y + height / 2, real_fail, height, color="#f58518", label="Real Z")
+            axes[1].set_xlabel("Failure rate (%)")
+            axes[1].grid(axis="x", alpha=0.3)
+            handles, labels = axes[0].get_legend_handles_labels()
+            fig.legend(
+                handles,
+                labels,
+                loc="upper center",
+                bbox_to_anchor=(0.5, 0.99),
+                ncol=legend_columns(len(labels)),
+                **LEGEND_STYLE,
+            )
+            fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, w_pad=2.0)
+            fig.savefig(args.output_dir / "synthetic_vs_real_transfer_summary.png", dpi=180)
+            plt.close(fig)
 
     if summary.get("coarse_gnss_3d_metrics"):
         coarse_3d = summary["coarse_gnss_3d_metrics"]
@@ -1490,26 +1775,38 @@ def render_plots(
             if method != "Oracle acceleration"
         ]
         fig, axes = plt.subplots(1, 2, figsize=(17, 6))
+        bar_positions = np.arange(len(comparison_3d))
         axes[0].bar(
-            comparison_3d,
+            bar_positions,
             [coarse_3d[method]["mean_window_rmse_m"] for method in comparison_3d],
             color=[COLORS[method] for method in comparison_3d],
         )
         axes[0].set_ylabel("Mean window RMSE (m)")
-        axes[0].set_xticks(range(len(comparison_3d)), wrapped_labels(comparison_3d))
-        axes[0].tick_params(axis="x", rotation=0)
+        axes[0].set_xticks(bar_positions)
+        axes[0].set_xticklabels([])
+        axes[0].tick_params(axis="x", length=0)
         axes[0].grid(axis="y", alpha=0.3)
 
         axes[1].bar(
-            comparison_3d,
+            bar_positions,
             [coarse_3d[method]["failure_rate_pct"] for method in comparison_3d],
             color=[COLORS[method] for method in comparison_3d],
         )
         axes[1].set_ylabel(f"Windows > {args.position_threshold:g} m (%)")
-        axes[1].set_xticks(range(len(comparison_3d)), wrapped_labels(comparison_3d))
-        axes[1].tick_params(axis="x", rotation=0)
+        axes[1].set_xticks(bar_positions)
+        axes[1].set_xticklabels([])
+        axes[1].tick_params(axis="x", length=0)
         axes[1].grid(axis="y", alpha=0.3)
-        fig.tight_layout(pad=1.6, w_pad=2.0)
+        legend_handles = [Patch(facecolor=COLORS[method], label=method) for method in comparison_3d]
+        fig.legend(
+            legend_handles,
+            comparison_3d,
+            loc="upper center",
+            bbox_to_anchor=(0.5, 0.99),
+            ncol=legend_columns(len(comparison_3d)),
+            **LEGEND_STYLE,
+        )
+        fig.tight_layout(rect=(0, 0, 1, 0.82), pad=1.6, w_pad=2.0)
         fig.savefig(args.output_dir / "coarse_gnss_3d_ablation_comparison.png", dpi=180)
         plt.close(fig)
 
@@ -1578,8 +1875,8 @@ def render_plots(
             labels,
             loc="upper center",
             bbox_to_anchor=(0.5, 0.995),
-            ncol=min(4, max(1, len(labels))),
-            frameon=False,
+            ncol=legend_columns(len(labels)),
+            **LEGEND_STYLE,
         )
         fig.tight_layout(rect=(0, 0, 1, 0.88), pad=1.6, h_pad=2.0)
         fig.savefig(args.output_dir / "z_window_error_timeline.png", dpi=180)
@@ -1682,7 +1979,7 @@ def render_plots(
             if row_index == 2:
                 axis.set_xlabel("Forecast lead time (s)")
             axis.grid(alpha=0.25)
-    axes[0, 0].legend(loc="lower left", fontsize=8)
+    axes[0, 0].legend(loc="lower left", **LEGEND_STYLE)
     fig.text(
         0.5,
         0.005,
@@ -1756,7 +2053,7 @@ def render_plots(
             bbox={"facecolor": "white", "alpha": 0.75, "edgecolor": "none"},
         )
     axes[0, 0].set_ylabel("Z position error (m)")
-    axes[0, 0].legend(loc="lower left", fontsize=8)
+    axes[0, 0].legend(loc="lower left", **LEGEND_STYLE)
     fig.text(
         0.5,
         0.01,
@@ -1811,8 +2108,8 @@ def render_plots(
         labels,
         loc="upper center",
         bbox_to_anchor=(0.5, 0.995),
-        ncol=min(4, max(1, len(labels))),
-        frameon=False,
+        ncol=legend_columns(len(labels)),
+        **LEGEND_STYLE,
     )
     fig.text(
         0.5,
