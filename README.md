@@ -66,7 +66,13 @@ The current paper experiments use conditioned GRU models with:
 The real-flight files in `source_data/far_out_26_data` are included with project permission for research and reproducibility purposes.
 
 ---
-**Project Team**: Alicja Macutkiewicz, Weronika Marszalik, Paweł Leczkowski, Wiktor Ludwichowski, Emilia Łukasiuk
+**Project Team**: Emilia Łukasiuk. Alicja Macutkiewicz, Weronika Marszalik, Wiktor Ludwichowski, Paweł Leczkowski
+
+## License
+
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
+
+Copyright 2026 Emilia Łukasiuk, Alicja Macutkiewicz, Weronika Marszalik, Wiktor Ludwichowski, Paweł Leczkowski
 
 ---
 <details>
@@ -140,5 +146,9 @@ Pliki rzeczywistego lotu w `source_data/far_out_26_data` są dołączone za zgod
 
 ---
 **Zespół projektowy**: Alicja Macutkiewicz, Weronika Marszalik, Paweł Leczkowski, Wiktor Ludwichowski, Emilia Łukasiuk
+
+## Licencja
+
+Ten projekt jest udostępniany na warunkach licencji Apache License 2.0 – szczegółowe informacje znajdują się w pliku [LICENSE](LICENSE).
 
 </details>
