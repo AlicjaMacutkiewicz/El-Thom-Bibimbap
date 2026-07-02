@@ -69,7 +69,6 @@ The real-flight files in `source_data/far_out_26_data` are included with project
 **Project Team**: Alicja Macutkiewicz, Weronika Marszalik, Paweł Leczkowski, Wiktor Ludwichowski, Emilia Łukasiuk
 
 ---
----
 <details>
 <summary><b> Polish Version (click here)</b></summary>
 
