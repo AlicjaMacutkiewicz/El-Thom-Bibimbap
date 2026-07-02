@@ -1,23 +1,24 @@
 `Polish version below!`
 
-# Rocket Flight Prediction System ("El-Thom-Bibimbap")
+# Rocket Flight Prediction System
 **Flight trajectory prediction system for suborbital platform telemetry**
 
-This project implements an advanced trajectory prediction system for suborbital rockets, tested on the **R7 Orzeł** model (KN SimLE, Gdańsk University of Technology) The goal is to maintain continuous vehicle tracking in the event of communication loss or sensor failure by combining deterministic physics with deep learning
+This project implements a hybrid trajectory prediction system for suborbital rockets, tested on the **R7 Orzeł** model (KN SimLE, Gdańsk University of Technology). The goal is to maintain short-horizon trajectory estimates during telemetry degradation or loss by combining deterministic numerical integration with recurrent neural networks.
 
 ---
 
 ## Project Concept
-In classical telemetry, losing the signal results in losing all knowledge of the object's position This system analyzes sensor data in real-time and "fits" it to a physical model enhanced by a neural network, allowing for position estimation until connectivity is restored
+In classical telemetry, losing the signal reduces direct access to the current vehicle state. This system uses recent telemetry to initialize a sequence model and then predicts future acceleration during a simulated cut-off interval. The predicted acceleration is integrated into position so that the trajectory estimate can be maintained until telemetry is restored.
 
 ### Core System Components:
-* **"Grzesiek" (The Generator)**: A high-performance engine for creating synthetic flight data and simulating sensor failures
-* **"Maurycy" (The Model)**: The actual prediction algorithm that integrates neural networks with physical constraints
+* **Synthetic flight generator**: A configurable RocketPy-based pipeline for creating synthetic flight data under nominal and off-nominal launch conditions.
+* **Prediction models**: GRU-based sequence models that combine neural forecasting with RK4-based physical baselines and trajectory-consistency losses.
 
 ### Model Architecture:
-* **Segment B (Base)**: A deterministic physical component utilizing the **4th-order Runge-Kutta (RK4)** method to solve Newtonian equations of motion
-* **Segment S (Stochastic)**: A **Gated Recurrent Unit (GRU)** recurrent network responsible for modeling non-linear disturbances (wind, aero drag) that simplified analytical models do not cover
-* **Segment I (Integration)**: A data fusion module utilizing the **IPINN** (Inverse Physics-Informed Neural Networks) architecture with "soft physical constraints"
+* **Segment B (Baseline)**: A deterministic physical component using a **4th-order Runge-Kutta (RK4)** model for thrust, changing mass, launch direction, and gravity.
+* **Segment R (Residual model)**: A **Gated Recurrent Unit (GRU)** recurrent network that predicts either full acceleration or the residual acceleration not captured by the RK4 baseline.
+* **Segment G (Persistence gate)**: Optional gated variants blend the learned RK4-residual forecast with a last-acceleration baseline using learned per-axis gate values.
+* **Segment I (Integration)**: A trajectory-consistency layer that integrates predicted acceleration and compares the resulting position sequence with the reference trajectory.
 
 ---
 ## Tech Stack
@@ -31,39 +32,38 @@ In classical telemetry, losing the signal results in losing all knowledge of the
 
 ## Key Features
 
-### Generator "Grzesiek" 
-* **Stochastic Motor Modeling**: Simulation of deviations in nominal parameters such as grain geometry, nozzle specs, and total impulse
-* **Environmental Conditions**: Integration with the ERA5 database for the Gdańsk University of Technology location
-* **Error Emulation**: Simulation of bit-switch, sample-and-hold, and signal dropouts as a function of wind speed and g-loads
-* **Dynamic Auto-Ranging**: Automatic selection of the most precise measurement range (e.g., dynamically switching between 2g-16g accelerometer streams) during flight
+### Synthetic Flight Generator
+* **Scenario conditioning**: Generation of flights with configurable oxidizer fraction, pressure/thrust scaling, rocket mass scaling, and latent drag variation.
+* **Environmental Conditions**: Integration with ERA5 atmospheric reanalysis data.
+* **Sensor Emulation**: Simulation of telemetry channels used by the prediction models, including acceleration, angular velocity, barometric pressure, and temperature.
+* **Dynamic Auto-Ranging**: Automatic selection of the most precise measurement range (e.g., dynamically switching between 2g-16g accelerometer streams) during flight.
 
-### Model "Maurycy"
-* **Physics-Informed Architecture**: Implements a custom loss function $L_{Total} = MSE_{acc} + (\lambda \cdot PINN_{loss})$ to ensure estimated trajectories adhere to Newtonian kinematics.
-* **Dynamic Operational Modes**: Supports **Spin-Up** mode for real-time tuning using live sensor data and **Cut-off** mode for autonomous sequence-to-sequence prediction during signal loss.
-* **Analytical Integration (RK4)**: Utilizes the 4th-order Runge-Kutta method to calculate deterministic base components ($x_b$) such as gravity and thrust.
-* **Non-linear Residual Learning**: The GRU network focuses exclusively on predicting the non-linear residual component ($x_s$), representing complex forces like wind and atmospheric drag.
+### Prediction Models
+* **Residual RK4-GRU Learning**: The residual variants predict the acceleration correction relative to the deterministic RK4 baseline.
+* **Trajectory-Consistency Loss**: Physics-informed variants integrate predicted acceleration and penalize accumulated position drift over the prediction horizon.
+* **Persistence-Gated Forecasting**: Gated variants learn to blend the RK4-residual forecast with a last-acceleration baseline for improved robustness under simulation-to-real domain shift.
+* **Spin-Up/Cut-Off Operation**: Models use a Spin-Up encoder window with available telemetry and a Cut-Off decoder window that predicts future acceleration without new measurements.
 
 ---
 
 ## Repository Structure
 * `/docs` – Theoretical documentation and project schemes
-* `/generator` – Source code for the "Grzesiek" synthetic data generator
-* `/prediction_models` – Implementations of **"Maurycy"** (including GRU, VAR, and Integration modules)
+* `/generator` – Source code for the synthetic data generator
+* `/prediction_models` – Training and evaluation code for GRU-based and baseline trajectory predictors
 * `/source_data` – Configuration files, `.ork` models, and input data
 
 ---
 
-## Project Status (Roadmap)
+## Paper Configuration
 
-### PHASES 1 & 2 (Completed)
-* Implementation of sensor support (BME280, GNSS, IMU)
-* Creation of the atmospheric model and variable motor performance parameters
-* Data I/O optimization using the `.parquet` columnar format
+The current paper experiments use conditioned GRU models with:
+* 8 telemetry inputs: acceleration, angular velocity, barometric pressure, and temperature
+* 3 scenario-conditioning inputs: oxidizer fraction, pressure scale, and rocket mass scale
+* an internal Spin-Up/Cut-Off mode flag appended by the model
+* a 120-sample historical Spin-Up window and a 60-sample prediction horizon
+* synthetic 3D evaluation on held-out flights and real-flight vertical-axis replay on FAR-OUT 2026 telemetry
 
-### PHASE 3 (In Progress)
-* Implementation of the composite PINN loss function: $L_{Total} = MSE_{acc} + \lambda_{PINN} L_{PINN}$
-* Introduction of operational modes: **Spin-Up** (sensor tuning) and **Cut-off** (autonomous prediction/looping)
-* Automation of result visualization and training status reporting
+The real-flight files in `source_data/far_out_26_data` are included with project permission for research and reproducibility purposes.
 
 ---
 **Project Team**: Alicja Macutkiewicz, Weronika Marszalik, Paweł Leczkowski, Wiktor Ludwichowski, Emilia Łukasiuk
@@ -73,24 +73,25 @@ In classical telemetry, losing the signal results in losing all knowledge of the
 <details>
 <summary><b> Polish Version (click here)</b></summary>
 
-# Rocket Flight Prediction System ("El-Thom-Bibimbap")
+# Rocket Flight Prediction System
 **System predykcji toru lotu dla telemetrii platform suborbitalnych**
 
-Projekt realizuje zaawansowany system przewidywania trajektorii rakiet suborbitalnych (testowany na modelu **R7 Orzeł**, KN SimLE PG) Celem jest utrzymanie ciągłości śledzenia pojazdu w przypadku utraty łączności lub awarii sensorów poprzez połączenie fizyki deterministycznej z głębokim uczeniem
+Projekt realizuje hybrydowy system przewidywania trajektorii rakiet suborbitalnych, testowany na modelu **R7 Orzeł** (KN SimLE PG). Celem jest utrzymanie krótkohoryzontowej estymacji trajektorii w przypadku degradacji lub utraty telemetrii poprzez połączenie deterministycznej integracji numerycznej z rekurencyjnymi sieciami neuronowymi.
 
 ---
 
 ## Idea projektu
-W klasycznej telemetrii utrata sygnału oznacza utratę wiedzy o pozycji obiektu System analizuje dane z czujników w czasie rzeczywistym i "dopasowuje" do nich model fizyczny wspomagany przez sieć neuronową, co pozwala oszacować pozycję aż do momentu odzyskania łączności
+W klasycznej telemetrii utrata sygnału ogranicza bezpośredni dostęp do aktualnego stanu pojazdu. System wykorzystuje ostatnie dostępne próbki telemetrii do zainicjalizowania modelu sekwencyjnego, a następnie przewiduje przyszłe przyspieszenie w symulowanym okresie odcięcia sygnału. Przewidywane przyspieszenie jest całkowane do pozycji, aby utrzymać estymację trajektorii do momentu odzyskania telemetrii.
 
 ### Główne komponenty systemu:
-* **"Grzesiek" (Generator)**: Wysokowydajny silnik do tworzenia syntetycznych danych lotu i symulacji awarii sensorów
-* **"Maurycy" (Model)**: Właściwy algorytm predykcji integrujący sieci neuronowe z więzami fizycznymi
+* **Generator lotów syntetycznych**: Konfigurowalny generator oparty o RocketPy, służący do tworzenia danych lotu w nominalnych i odchylonych warunkach startowych.
+* **Modele predykcyjne**: Modele sekwencyjne GRU łączące predykcję neuronową, bazę fizyczną RK4 oraz funkcje straty wymuszające spójność trajektorii.
 
 ### Architektura modelu:
-* **Segment B (Base)**: Deterministyczny komponent fizyczny wykorzystujący metodę **Rungego-Kutty 4. rzędu (RK4)** do rozwiązywania równań ruchu Newtona
-* **Segment S (Stochastic)**: Sieć rekurencyjna **GRU** (Gated Recurrent Unit), odpowiedzialna za modelowanie nieliniowych zakłóceń (wiatr, opór aero), których nie obejmują uproszczone modele analityczne
-* **Segment I (Integration)**: Moduł fuzji danych wykorzystujący architekturę **IPINN** (Inverse Physics-Informed Neural Networks) z zastosowaniem tzw. miękkich więzów fizycznych
+* **Segment B (Baseline)**: Deterministyczny komponent fizyczny wykorzystujący metodę **Rungego-Kutty 4. rzędu (RK4)** do modelowania ciągu, zmiennej masy, kierunku startu i grawitacji.
+* **Segment R (Model resztkowy)**: Sieć rekurencyjna **GRU** (Gated Recurrent Unit), która przewiduje pełne przyspieszenie lub składową resztkową niewyjaśnioną przez bazę RK4.
+* **Segment G (Brama persystencji)**: Opcjonalne warianty bramkowane łączą predykcję RK4-GRU z bazą ostatniego przyspieszenia przy użyciu uczonych wag dla każdej osi.
+* **Segment I (Integration)**: Warstwa spójności trajektorii, która całkuje przewidywane przyspieszenie i porównuje uzyskaną pozycję z trajektorią referencyjną.
 
 ---
 
@@ -105,39 +106,38 @@ W klasycznej telemetrii utrata sygnału oznacza utratę wiedzy o pozycji obiektu
 
 ## Kluczowe Funkcjonalności
 
-### Generator "Grzesiek"
-* **Stochastyczne Modelowanie Silnika**: Symulacja odchyłów parametrów nominalnych (geometria ziarna, dyszy, impuls całkowity)
-* **Warunki Środowiskowe**: Integracja z bazą ERA5 dla lokalizacji Politechniki Gdańskiej
-* **Emulacja Błędów**: Symulacja bit-switch, sample-and-hold oraz dropoutów sygnału uzależnionych od przeciążeń i wiatru
-* **Dynamic Auto-Ranging**: Automatyczny dobór najbardziej precyzyjnego zakresu pomiarowego (np. akcelerometry 2g-16g) w trakcie lotu
+### Generator lotów syntetycznych
+* **Warunkowanie scenariuszy**: Generowanie lotów z konfigurowalnym ułamkiem utleniacza, skalą ciśnienia/ciągu, skalą masy rakiety i ukrytą zmiennością oporu.
+* **Warunki Środowiskowe**: Integracja z reanalizą atmosferyczną ERA5.
+* **Emulacja Sensorów**: Symulacja kanałów telemetrii używanych przez modele predykcyjne, w tym przyspieszenia, prędkości kątowej, ciśnienia barometrycznego i temperatury.
+* **Dynamic Auto-Ranging**: Automatyczny dobór najbardziej precyzyjnego zakresu pomiarowego (np. akcelerometry 2g-16g) w trakcie lotu.
 
-### Model "Maurycy"
-* **Architektura Informowana Fizycznie**: Zaimplementowana funkcja straty $L_{Total} = MSE_{acc} + (\lambda \cdot PINN_{loss})$ wymuszająca zgodność estymowanych trajektorii z zasadami dynamiki Newtona.
-* **Dynamiczne Tryby Pracy**: Obsługa trybu **Spin-Up** (dostrajanie do danych z sensorów w czasie rzeczywistym) oraz **Cut-off** (autonomiczna predykcja sekwencyjna po utracie sygnału).
-* **Integracja Analityczna (RK4)**: Wykorzystanie metody Rungego-Kutty 4. rzędu do obliczania deterministycznych składowych bazowych ($x_b$), takich jak grawitacja i ciąg.
-* **Uczenie Składowych Nieliniowych**: Sieć GRU koncentruje się wyłącznie na przewidywaniu nieliniowego członu resztkowego ($x_s$), reprezentującego złożone siły takie jak wiatr i opór atmosferyczny.
+### Modele predykcyjne
+* **Uczenie resztkowe RK4-GRU**: Warianty resztkowe przewidują poprawkę przyspieszenia względem deterministycznej bazy RK4.
+* **Funkcja straty spójności trajektorii**: Warianty informowane fizycznie całkują przewidywane przyspieszenie i karzą narastający dryf pozycji w horyzoncie predykcji.
+* **Brama persystencji**: Warianty bramkowane uczą się mieszać predykcję RK4-GRU z bazą ostatniego przyspieszenia, aby poprawić odporność przy przesunięciu symulacja-rzeczywistość.
+* **Tryb Spin-Up/Cut-Off**: Modele używają historycznego okna Spin-Up z dostępną telemetrią oraz okna Cut-Off, w którym przewidują przyszłe przyspieszenie bez nowych pomiarów.
 
 ---
 
 ## Struktura Repozytorium
 * `/docs` – Dokumentacja teoretyczna i schematy projektowe
 * `/generator` – Kod źródłowy generatora danych syntetycznych
-* `/prediction_models` – Implementacje modelu **"Maurycy"** (moduły GRU, VAR oraz Integracja)
+* `/prediction_models` – Kod treningu i ewaluacji modeli GRU oraz metod bazowych
 * `/source_data` – Pliki konfiguracyjne, modele `.ork` oraz dane wejściowe
 
 ---
 
-## Status Projektu (Roadmap)
+## Konfiguracja eksperymentów opisanych w artykule
 
-### ETAP 1 & 2 (Zakończone)
-* Implementacja obsługi czujników (BME280, GNSS, IMU)
-* Stworzenie modelu atmosfery i zmiennych warunków pracy silnika
-* Optymalizacja zapisu danych do formatu `.parquet`
+Aktualne eksperymenty artykułowe wykorzystują warunkowane modele GRU z:
+* 8 wejściami telemetrycznymi: przyspieszenie, prędkość kątowa, ciśnienie barometryczne i temperatura
+* 3 wejściami opisującymi scenariusz: ułamek utleniacza, skala ciśnienia i skala masy rakiety
+* wewnętrzną flagą trybu Spin-Up/Cut-Off dodawaną przez model
+* historycznym oknem Spin-Up o długości 120 próbek i horyzontem predykcji 60 próbek
+* syntetyczną ewaluacją 3D na lotach testowych oraz rzeczywistą ewaluacją osi Z na telemetrii FAR-OUT 2026
 
-### ETAP 3 (W realizacji)
-* Implementacja złożonej funkcji straty PINN: $L_{Total} = MSE_{acc} + \lambda_{PINN} L_{PINN}$
-* Wprowadzenie trybów pracy: **Spin-Up** (dostrajanie do czujników) oraz **Cut-off** (predykcja autonomiczna/zapętlenie)
-* Automatyzacja wizualizacji wyników i raportowania stanu uczenia
+Pliki rzeczywistego lotu w `source_data/far_out_26_data` są dołączone za zgodą projektu w celach badawczych i reprodukowalności.
 
 ---
 **Zespół projektowy**: Alicja Macutkiewicz, Weronika Marszalik, Paweł Leczkowski, Wiktor Ludwichowski, Emilia Łukasiuk
